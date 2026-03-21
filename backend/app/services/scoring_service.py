@@ -21,7 +21,7 @@ def validate_overlay_target_ids(
     if unknown_targets:
         joined_targets = ", ".join(sorted(set(unknown_targets)))
         raise InvalidOverlayTargetError(
-            f"Claude returned overlay target ids that are not allowed for stage '{stage.id}': {joined_targets}."
+            f"The model server returned overlay target ids that are not allowed for stage '{stage.id}': {joined_targets}."
         )
 
     deduped_targets: list[str] = []

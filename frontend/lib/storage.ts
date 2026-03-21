@@ -1,5 +1,5 @@
 import { createDefaultCalibration } from "@/lib/geometry";
-import type { SessionRecord, SkillLevel } from "@/lib/types";
+import type { DebriefResponse, SessionRecord, SkillLevel } from "@/lib/types";
 
 const SESSIONS_KEY = "ai-clinical-skills-coach:sessions";
 
@@ -39,6 +39,43 @@ export function saveSession(session: SessionRecord): SessionRecord {
 
 export function getSession(sessionId: string): SessionRecord | null {
   return readSessions()[sessionId] ?? null;
+}
+
+export function buildSessionReviewSignature(session: SessionRecord): string {
+  return JSON.stringify({
+    events: session.events,
+    skillLevel: session.skillLevel,
+  });
+}
+
+export function getCachedDebrief(session: SessionRecord): DebriefResponse | null {
+  if (!session.debrief) {
+    return null;
+  }
+
+  return session.debrief.reviewSignature === buildSessionReviewSignature(session)
+    ? session.debrief.response
+    : null;
+}
+
+export function saveSessionDebrief(
+  sessionId: string,
+  response: DebriefResponse,
+): SessionRecord | null {
+  const session = getSession(sessionId);
+
+  if (!session) {
+    return null;
+  }
+
+  return saveSession({
+    ...session,
+    debrief: {
+      response,
+      reviewSignature: buildSessionReviewSignature(session),
+      generatedAt: new Date().toISOString(),
+    },
+  });
 }
 
 export function createSession(

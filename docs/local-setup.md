@@ -1,77 +1,167 @@
 # Local Setup Guide
 
-This guide walks through the full local setup for the Phase 2 version of AI Clinical Skills Coach.
+This guide walks through the full local setup for AI Clinical Skills Coach, including OpenAI-compatible and Anthropic-style AI backends.
 
 ## 1. Prerequisites
 
-Make sure your machine has:
+Recommended local tooling:
 
-- `Node.js` 22 or newer
+- `Node.js` 20 or newer
 - `npm` 10 or newer
-- `Python` 3.13 or newer
-- A webcam if you want to test the full trainer flow
+- `Python` 3.10 or newer
+- a webcam if you want to test the live trainer flow
 
-The current repo has already been verified with:
+Notes:
 
-- `Node 22.19.0`
-- `npm 10.9.3`
-- `Python 3.13.7`
+- the backend test run in this workspace is passing on Python `3.10.11`
+- the frontend uses Next `16.x`, React `19.x`, and TypeScript `5.x`
 
-## 2. Clone or open the repository
+## 2. Open the Repository
+
+If you already have the repo locally:
 
 ```bash
-cd /path/to/your/projects
+cd CodeStormers-Claude_Hackathon
+```
+
+If you are cloning it fresh:
+
+```bash
 git clone <your-repo-url>
 cd CodeStormers-Claude_Hackathon
 ```
 
-If you already have the repo locally, just `cd` into it.
+## 3. Start or Choose an AI Endpoint
 
-## 3. Backend setup
+The backend now supports two AI endpoint styles:
 
-Open a terminal and run:
+- OpenAI-compatible endpoints such as local vLLM
+- Anthropic-style Messages endpoints
+
+The backend auto-detects which one to use from `AI_API_BASE_URL` unless you override it with `AI_PROVIDER`.
+
+### Option A: OpenAI-Compatible Example with vLLM
+
+Recommended when you want to run local Qwen models.
+
+Example server:
+
+```bash
+vllm serve Qwen/Qwen2.5-Omni-7B --api-key EMPTY
+```
+
+Good model choices:
+
+- `Qwen/Qwen2.5-VL-3B-Instruct`: lighter vision-capable option
+- `Qwen/Qwen2.5-Omni-7B`: stronger multimodal option for both analysis and debrief
+
+Do not use:
+
+- `Qwen3-4B` for `/api/v1/analyze-frame`, because it is text-only
+
+### Option B: Anthropic-Style Endpoint
+
+Use an Anthropic-compatible `/messages` endpoint if you want to run against Anthropic directly or through a compatible proxy.
+
+Example base URL:
+
+```text
+https://api.anthropic.com/v1/messages
+```
+
+If your proxy URL does not obviously look like Anthropic, set `AI_PROVIDER=anthropic` explicitly.
+
+## 4. Backend Setup
+
+### PowerShell
+
+```powershell
+cd backend
+python -m venv .venv
+.\.venv\Scripts\Activate.ps1
+pip install -r requirements.txt
+Copy-Item .env.example .env
+```
+
+### Bash
 
 ```bash
 cd backend
-python3 -m venv .venv
+python -m venv .venv
 source .venv/bin/activate
 pip install -r requirements.txt
 cp .env.example .env
-uvicorn app.main:app --reload --port 8000
 ```
 
-### What this does
+### Backend Environment
 
-- creates a Python virtual environment
-- installs FastAPI, pytest, and the other backend dependencies
-- creates a local `.env` file
-- starts the API at `http://localhost:8000`
+Open `backend/.env` and choose one of these patterns.
 
-### Required backend environment for Phase 2
-
-Open `backend/.env` and set:
+#### OpenAI-Compatible or vLLM
 
 ```env
 FRONTEND_ORIGIN=http://localhost:3000
 SIMULATION_ONLY=true
-ANTHROPIC_API_KEY=your_anthropic_api_key_here
-ANTHROPIC_ANALYSIS_MODEL=claude-sonnet-4-6
-ANTHROPIC_DEBRIEF_MODEL=claude-haiku-4-5
+AI_PROVIDER=auto
+AI_API_BASE_URL=http://localhost:8000/v1
+AI_API_KEY=EMPTY
+AI_ANALYSIS_MODEL=Qwen/Qwen2.5-Omni-7B
+AI_DEBRIEF_MODEL=Qwen/Qwen2.5-Omni-7B
+AI_TIMEOUT_SECONDS=60
+AI_ANALYSIS_MAX_TOKENS=1400
+AI_DEBRIEF_MAX_TOKENS=1200
 ```
 
-If `ANTHROPIC_API_KEY` is empty, the trainer UI still loads, but live analysis and AI debrief calls return a clear `503` message.
+#### Anthropic-Style
 
-### Expected result
+```env
+FRONTEND_ORIGIN=http://localhost:3000
+SIMULATION_ONLY=true
+AI_PROVIDER=auto
+AI_API_BASE_URL=https://api.anthropic.com/v1/messages
+AI_API_KEY=your_api_key_here
+AI_ANALYSIS_MODEL=your_vision_capable_model
+AI_DEBRIEF_MODEL=your_text_or_multimodal_model
+AI_TIMEOUT_SECONDS=60
+AI_ANALYSIS_MAX_TOKENS=1400
+AI_DEBRIEF_MAX_TOKENS=1200
+ANTHROPIC_VERSION=2023-06-01
+```
 
-You should see output similar to:
+### Auto-Detection Rules
+
+With `AI_PROVIDER=auto`:
+
+- `anthropic.com` URLs are treated as Anthropic
+- URLs ending in `/messages` are treated as Anthropic
+- everything else is treated as OpenAI-compatible
+
+Older environment names such as `OPENAI_API_BASE_URL` and `ANTHROPIC_API_KEY` still work as aliases, but `AI_*` is the preferred format.
+
+### Start the Backend
+
+```bash
+uvicorn app.main:app --reload --port 8000
+```
+
+Expected result:
 
 ```text
 Uvicorn running on http://127.0.0.1:8000
 ```
 
-## 4. Frontend setup
+## 5. Frontend Setup
 
-Open a second terminal and run:
+### PowerShell
+
+```powershell
+cd frontend
+npm install
+Copy-Item .env.local.example .env.local
+npm run dev
+```
+
+### Bash
 
 ```bash
 cd frontend
@@ -80,13 +170,15 @@ cp .env.local.example .env.local
 npm run dev
 ```
 
-### What this does
+Default frontend environment:
 
-- installs the Next.js frontend dependencies
-- creates a local frontend environment file
-- starts the frontend at `http://localhost:3000`
+```env
+NEXT_PUBLIC_API_BASE_URL=http://localhost:8000/api/v1
+```
 
-## 5. Open the app
+This should point at the backend API, not at your model server.
+
+## 6. Open the App
 
 Visit:
 
@@ -96,11 +188,11 @@ http://localhost:3000
 
 You should see the landing page for AI Clinical Skills Coach.
 
-## 6. First-run verification
+## 7. First-Run Verification
 
-Before trying the trainer UI, verify the backend from a third terminal:
+Before testing the trainer UI, verify the backend from another terminal.
 
-### Health check
+### Health Check
 
 ```bash
 curl http://localhost:8000/api/v1/health
@@ -112,19 +204,20 @@ Expected result:
 {"status":"ok","simulation_only":true}
 ```
 
-### Procedure metadata
+### Procedure Metadata
 
 ```bash
 curl http://localhost:8000/api/v1/procedures/simple-interrupted-suture
 ```
 
-This should return the procedure definition with:
+This should return:
 
+- the procedure id and title
+- simulation-only metadata
 - 7 stages
 - 8 named overlay targets
-- simulation-only metadata
 
-### Analyze endpoint
+### Analyze Endpoint
 
 ```bash
 curl -X POST http://localhost:8000/api/v1/analyze-frame \
@@ -132,18 +225,22 @@ curl -X POST http://localhost:8000/api/v1/analyze-frame \
   -d '{"procedure_id":"simple-interrupted-suture","stage_id":"needle_entry","skill_level":"beginner","image_base64":"ZmFrZQ=="}'
 ```
 
-With a valid Anthropic key, this should return a schema-valid AI response with:
+With a valid AI endpoint and a vision-capable model, this should return a response containing:
 
 - `step_status`
+- `confidence`
 - `visible_observations`
 - `issues`
 - `coaching_message`
+- `next_action`
 - `overlay_target_ids`
 - `score_delta`
 
-Without an Anthropic key, it should return a `503` with a message explaining how to enable Phase 2 AI features.
+Without `AI_API_BASE_URL`, this route returns `503`.
 
-### Debrief endpoint
+If the upstream model request fails or returns invalid JSON, this route returns `502`.
+
+### Debrief Endpoint
 
 ```bash
 curl -X POST http://localhost:8000/api/v1/debrief \
@@ -151,9 +248,13 @@ curl -X POST http://localhost:8000/api/v1/debrief \
   -d '{"session_id":"demo-session","procedure_id":"simple-interrupted-suture","skill_level":"beginner","events":[]}'
 ```
 
-This route returns a three-part debrief and quiz. It uses a simple fallback response when `events` is empty, and it uses Claude for non-empty session histories.
+This route always returns a structured debrief shape:
 
-## 7. How to use the trainer
+- with empty `events`, it returns a simple default study summary
+- with non-empty `events`, it prefers model-backed output
+- if the debrief AI path fails or returns a partial shape, the backend falls back to deterministic content
+
+## 8. Trainer Flow
 
 Once both servers are running:
 
@@ -161,16 +262,13 @@ Once both servers are running:
 2. Click `Start Training`
 3. Allow camera access when prompted
 4. Place an orange, banana, or foam pad in view
-5. Choose either:
-   - corner calibration mode
-   - centered guide fallback mode
-6. Select a stage if you want to jump around
-7. Click `Check My Step`
-8. Review the AI feedback in the side panel
-9. Click `Advance to Next Stage` after a passing stage
-10. Click `Open Review` after the final passing stage to request the AI debrief
+5. Choose a calibration mode
+6. Capture a frame with `Check My Step`
+7. Review the returned overlays, observations, and coaching
+8. Retry or advance through the stages
+9. Open the review page at the end of the session
 
-## 8. Local quality checks
+## 9. Quality Checks
 
 ### Frontend
 
@@ -189,31 +287,48 @@ source .venv/bin/activate
 pytest
 ```
 
-## 9. Troubleshooting
+## 10. Troubleshooting
 
-### The frontend says it cannot load the procedure
+### The landing page loads but analysis returns `503`
 
-Usually this means the backend is not running.
+Usually `AI_API_BASE_URL` is missing or empty in `backend/.env`.
 
-Check:
+Check the file and restart `uvicorn` after updating it.
 
-```bash
-curl http://localhost:8000/api/v1/health
+### Analysis returns `502`
+
+Common reasons:
+
+- the upstream AI server is down
+- the configured model is not vision-capable
+- the model returned invalid or partial JSON
+- the provider type was auto-detected incorrectly for a custom proxy
+
+If you are using a custom Anthropic-compatible proxy, try setting:
+
+```env
+AI_PROVIDER=anthropic
 ```
 
-If that fails, restart the backend server.
+### The review page shows local history but fallback debrief text
 
-### The camera button does nothing
+This means the review page loaded the session correctly, but fresh debrief generation was unavailable or invalid. The app now falls back to a deterministic study summary so the flow still works.
 
-Check browser permissions:
+### The review page says no local session found
 
-- make sure camera access is allowed for `localhost`
-- reload the trainer page after changing permissions
-- try the `Retry Camera Access` button
+The review page depends on browser `localStorage`.
 
-### Port 3000 or 8000 is already in use
+Use the same:
 
-Use a different port and update the environment values.
+- browser profile
+- machine
+- localStorage state
+
+that created the session during training.
+
+### Port `3000` or `8000` is already in use
+
+Run the service on a different port and update the dependent environment variable.
 
 Example backend:
 
@@ -221,38 +336,20 @@ Example backend:
 uvicorn app.main:app --reload --port 8001
 ```
 
-Then update `frontend/.env.local`:
+Then update:
 
 ```env
 NEXT_PUBLIC_API_BASE_URL=http://localhost:8001/api/v1
 ```
 
-### Review page shows no session
+### `npm` or `node` is missing
 
-The review page depends on browser `localStorage`.
+Install a current Node.js release, then rerun `npm install` in `frontend/`.
 
-Use the same browser profile and same machine where you completed the trainer flow.
+## 11. Current Limitations
 
-### You want a fresh clean session
-
-Use the `Start Fresh Session` button in the trainer UI.
-
-### Analysis or debrief returns a 503
-
-This usually means `ANTHROPIC_API_KEY` is missing in `backend/.env`.
-
-Check:
-
-```bash
-cat backend/.env
-```
-
-Make sure `ANTHROPIC_API_KEY` is set, then restart `uvicorn`.
-
-## 10. Current limitations
-
-- the trainer supports one procedure only: `simple-interrupted-suture`
-- live AI behavior depends on a valid Anthropic API key
-- session history is stored locally in the browser
-- there is no database-backed persistence yet
-- the product is simulation-only and not intended for real clinical use
+- one supported procedure
+- browser-local persistence only
+- no auth or multi-user storage
+- simulation-only educational framing
+- live analysis quality depends on image quality and model choice

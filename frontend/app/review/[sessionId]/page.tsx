@@ -6,13 +6,20 @@ import { useEffect, useState } from "react";
 
 import { ReviewSummary } from "@/components/ReviewSummary";
 import { generateDebrief, getProcedure } from "@/lib/api";
-import { getSession } from "@/lib/storage";
+import {
+  buildSessionReviewSignature,
+  getCachedDebrief,
+  getSession,
+  saveSessionDebrief,
+} from "@/lib/storage";
 import type {
   DebriefRequest,
   DebriefResponse,
   ProcedureDefinition,
   SessionRecord,
 } from "@/lib/types";
+
+const pendingDebriefRequests = new Map<string, Promise<DebriefResponse>>();
 
 function buildDebriefPayload(session: SessionRecord): DebriefRequest {
   return {
@@ -35,6 +42,26 @@ function buildDebriefPayload(session: SessionRecord): DebriefRequest {
   };
 }
 
+function getDebriefRequestKey(session: SessionRecord): string {
+  return `${session.id}:${buildSessionReviewSignature(session)}`;
+}
+
+function requestSessionDebrief(session: SessionRecord): Promise<DebriefResponse> {
+  const requestKey = getDebriefRequestKey(session);
+  const existingRequest = pendingDebriefRequests.get(requestKey);
+
+  if (existingRequest) {
+    return existingRequest;
+  }
+
+  const nextRequest = generateDebrief(buildDebriefPayload(session)).finally(() => {
+    pendingDebriefRequests.delete(requestKey);
+  });
+
+  pendingDebriefRequests.set(requestKey, nextRequest);
+  return nextRequest;
+}
+
 export default function ReviewPage() {
   const params = useParams();
   const sessionParam = params.sessionId;
@@ -46,93 +73,129 @@ export default function ReviewPage() {
   const [debrief, setDebrief] = useState<DebriefResponse | null>(null);
   const [debriefError, setDebriefError] = useState<string | null>(null);
   const [isDebriefLoading, setIsDebriefLoading] = useState(false);
-  const [loading, setLoading] = useState(true);
+  const [isSessionLoading, setIsSessionLoading] = useState(true);
 
   useEffect(() => {
     if (!sessionId) {
-      setLoading(false);
+      setSession(null);
+      setDebrief(null);
+      setDebriefError(null);
+      setIsDebriefLoading(false);
+      setIsSessionLoading(false);
       return;
     }
 
     const existingSession = getSession(sessionId);
     setSession(existingSession);
+    setDebrief(existingSession ? getCachedDebrief(existingSession) : null);
+    setDebriefError(null);
+    setIsDebriefLoading(false);
+    setIsSessionLoading(false);
+  }, [sessionId]);
 
-    if (!existingSession) {
-      setLoading(false);
+  useEffect(() => {
+    const procedureId = session?.procedureId;
+
+    if (!procedureId) {
+      setProcedure(null);
       return;
     }
 
-    const sessionToHydrate: SessionRecord = existingSession;
+    let cancelled = false;
+
+    async function loadProcedure() {
+      try {
+        const procedureResponse = await getProcedure(procedureId);
+        if (!cancelled) {
+          setProcedure(procedureResponse);
+        }
+      } catch {
+        if (!cancelled) {
+          setProcedure(null);
+        }
+      }
+    }
+
+    void loadProcedure();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [session?.procedureId]);
+
+  useEffect(() => {
+    if (!session) {
+      setDebrief(null);
+      setDebriefError(null);
+      setIsDebriefLoading(false);
+      return;
+    }
+
+    const cachedDebrief = getCachedDebrief(session);
+    if (cachedDebrief) {
+      setDebrief(cachedDebrief);
+      setDebriefError(null);
+      setIsDebriefLoading(false);
+      return;
+    }
+
+    if (session.events.length === 0) {
+      setDebrief(null);
+      setDebriefError(null);
+      setIsDebriefLoading(false);
+      return;
+    }
 
     let cancelled = false;
 
-    async function hydrateProcedure() {
+    async function hydrateDebrief() {
       setDebrief(null);
       setDebriefError(null);
-      setIsDebriefLoading(sessionToHydrate.events.length > 0);
+      setIsDebriefLoading(true);
 
       try {
-        const procedurePromise = getProcedure(sessionToHydrate.procedureId);
-        const debriefPromise =
-          sessionToHydrate.events.length > 0
-            ? generateDebrief(buildDebriefPayload(sessionToHydrate))
-            : Promise.resolve(null);
-
-        const [procedureResult, debriefResult] = await Promise.allSettled([
-          procedurePromise,
-          debriefPromise,
-        ]);
+        const debriefResponse = await requestSessionDebrief(session);
 
         if (cancelled) {
           return;
         }
 
-        if (procedureResult.status === "fulfilled") {
-          setProcedure(procedureResult.value);
-        } else {
-          setProcedure(null);
-        }
+        setDebrief(debriefResponse);
 
-        if (debriefResult.status === "fulfilled") {
-          setDebrief(debriefResult.value);
-        } else if (sessionToHydrate.events.length > 0) {
-          const reason = debriefResult.reason;
-          setDebriefError(
-            reason instanceof Error
-              ? reason.message
-              : "The AI debrief request failed for this session.",
-          );
+        const updatedSession = saveSessionDebrief(session.id, debriefResponse);
+        if (updatedSession) {
+          setSession(updatedSession);
         }
-      } catch {
+      } catch (error) {
         if (!cancelled) {
-          setProcedure(null);
-          setDebrief(null);
-          setDebriefError("The review page could not hydrate its API data.");
+          setDebriefError(
+            error instanceof Error
+              ? error.message
+              : "The session debrief request failed.",
+          );
         }
       } finally {
         if (!cancelled) {
           setIsDebriefLoading(false);
-          setLoading(false);
         }
       }
     }
 
-    void hydrateProcedure();
+    void hydrateDebrief();
 
     return () => {
       cancelled = true;
     };
-  }, [sessionId]);
+  }, [session]);
 
-  if (loading) {
+  if (isSessionLoading) {
     return (
       <main className="page-shell">
         <div className="page-inner review-shell">
           <div className="empty-state">
             <h1 className="review-title">Loading review</h1>
             <p className="review-subtle">
-              Reconstructing the local training session and requesting the stored AI
-              debrief.
+              Reconstructing the local training session from browser storage.
             </p>
           </div>
         </div>
@@ -173,7 +236,7 @@ export default function ReviewPage() {
             <span>Session Review</span>
           </div>
           <div className="button-row">
-            <span className="pill">Phase 2 AI summary</span>
+            <span className="pill">Phase 3 session review</span>
             <Link className="button-ghost" href="/">
               Landing
             </Link>

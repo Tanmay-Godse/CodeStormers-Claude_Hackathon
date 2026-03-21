@@ -18,7 +18,7 @@ type ReviewSummaryProps = {
 function toStageLabel(stageId: string, procedure: ProcedureDefinition | null) {
   return (
     procedure?.stages.find((stage) => stage.id === stageId)?.title ??
-    stageId.replaceAll("-", " ")
+    stageId.replaceAll("-", " ").replaceAll("_", " ")
   );
 }
 
@@ -39,13 +39,13 @@ export function ReviewSummary({
   return (
     <section className="review-grid">
       <article className="panel">
-        <span className="pill">AI session recap</span>
+        <span className="pill">Session recap</span>
         <h1 className="review-title" style={{ marginTop: 16 }}>
-          Phase 2 review
+          Phase 3 review
         </h1>
         <p className="review-subtle" style={{ marginTop: 14 }}>
-          This page still hydrates from browser session data first, then layers on the
-          stored AI debrief for the finished practice session.
+          This page hydrates from browser session data first, then layers on a stored
+          session debrief when one is available.
         </p>
         <p className="review-score" style={{ marginTop: 18 }}>
           {totalScore}
@@ -86,12 +86,12 @@ export function ReviewSummary({
       <section>
         <article className="review-card">
           <header>
-            <strong>AI debrief</strong>
-            <span className="pill">Claude review</span>
+            <strong>Session debrief</strong>
+            <span className="pill">Study summary</span>
           </header>
           {isDebriefLoading ? (
             <p className="review-subtle">
-              Generating the AI debrief from the stored stage history.
+              Building the session debrief from the stored stage history.
             </p>
           ) : null}
 
@@ -116,8 +116,8 @@ export function ReviewSummary({
               <section className="debrief-block">
                 <strong>Strengths</strong>
                 <ul className="feedback-list" style={{ marginTop: 12 }}>
-                  {debrief.strengths.map((item) => (
-                    <li key={item}>{item}</li>
+                  {debrief.strengths.map((item, index) => (
+                    <li key={`${index}-${item}`}>{item}</li>
                   ))}
                 </ul>
               </section>
@@ -125,8 +125,8 @@ export function ReviewSummary({
               <section className="debrief-block">
                 <strong>Improvement areas</strong>
                 <ul className="feedback-list" style={{ marginTop: 12 }}>
-                  {debrief.improvement_areas.map((item) => (
-                    <li key={item}>{item}</li>
+                  {debrief.improvement_areas.map((item, index) => (
+                    <li key={`${index}-${item}`}>{item}</li>
                   ))}
                 </ul>
               </section>
@@ -134,8 +134,8 @@ export function ReviewSummary({
               <section className="debrief-block">
                 <strong>3-step practice plan</strong>
                 <ol className="numbered-list" style={{ marginTop: 12 }}>
-                  {debrief.practice_plan.map((item) => (
-                    <li key={item}>{item}</li>
+                  {debrief.practice_plan.map((item, index) => (
+                    <li key={`${index}-${item}`}>{item}</li>
                   ))}
                 </ol>
               </section>
@@ -143,8 +143,8 @@ export function ReviewSummary({
               <section className="debrief-block">
                 <strong>Quick quiz</strong>
                 <ul className="timeline-list" style={{ marginTop: 12 }}>
-                  {debrief.quiz.map((item) => (
-                    <li className="timeline-item" key={item.question}>
+                  {debrief.quiz.map((item, index) => (
+                    <li className="timeline-item" key={`${index}-${item.question}`}>
                       <p style={{ margin: 0, fontWeight: 700 }}>{item.question}</p>
                       <p className="review-subtle" style={{ marginTop: 10 }}>
                         {item.answer}

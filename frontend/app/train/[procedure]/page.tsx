@@ -263,6 +263,7 @@ export default function TrainProcedurePage() {
         ...session,
         skillLevel,
         calibration,
+        debrief: undefined,
         events: [...session.events, event],
         updatedAt: new Date().toISOString(),
       });
@@ -429,9 +430,9 @@ export default function TrainProcedurePage() {
                 <div>
                   <h2 className="panel-title">Stage controls</h2>
                   <p className="panel-copy">
-                    Phase 2 analyzes the captured training frame with Claude and keeps
-                    the stage contract, score calculation, and overlay targets aligned
-                    with the backend rubric.
+                    Phase 3 keeps the capture flow stable, the scoring deterministic, and
+                    the overlay targets aligned with the backend rubric while the configured
+                    model server handles the stage coaching.
                   </p>
                 </div>
               </div>

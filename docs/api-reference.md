@@ -1,10 +1,20 @@
 # API Reference
 
-The backend exposes a small Phase 2 API under:
+The backend exposes a small API under:
 
 ```text
 http://localhost:8000/api/v1
 ```
+
+The frontend only talks to this backend. Browser clients do not call Anthropic or OpenAI-compatible model APIs directly.
+
+## Conventions
+
+- all request and response bodies are JSON
+- request validation is handled by Pydantic
+- backend scoring is deterministic
+- analyze errors are surfaced as HTTP errors
+- debrief responses are normalized into a stable four-part structure
 
 ## `GET /health`
 
@@ -24,7 +34,7 @@ curl http://localhost:8000/api/v1/health
 
 ## `GET /procedures/{id}`
 
-Returns the procedure definition used by the frontend trainer.
+Returns the procedure definition used by the trainer UI.
 
 ### Supported procedure ids
 
@@ -54,23 +64,23 @@ curl http://localhost:8000/api/v1/procedures/simple-interrupted-suture
 - `named_overlay_targets`: overlay ids with labels, descriptions, normalized coordinates, and colors
 - `stages`: stage ids, objectives, visible checks, common errors, overlay target ids, and score weights
 
+### Error behavior
+
+- `404` if the procedure id is unknown
+
 ## `POST /analyze-frame`
 
-This endpoint submits a single captured trainer frame to the backend for Claude-powered stage analysis. The backend validates the request, prompts Claude with the procedure rubric, validates the returned JSON, rejects unknown overlay target ids, and computes `score_delta` in Python.
+Submits one captured trainer frame for stage analysis.
 
-### Example request
+The backend:
 
-```bash
-curl -X POST http://localhost:8000/api/v1/analyze-frame \
-  -H 'Content-Type: application/json' \
-  -d '{
-    "procedure_id": "simple-interrupted-suture",
-    "stage_id": "needle_entry",
-    "skill_level": "beginner",
-    "image_base64": "ZmFrZQ==",
-    "student_question": "Am I holding the needle too close to the tip?"
-  }'
-```
+- validates the request
+- loads the procedure rubric and current stage
+- auto-detects whether the configured AI endpoint is OpenAI-compatible or Anthropic-style
+- prompts the configured model
+- validates the returned JSON
+- filters overlay targets against the current stage
+- computes `score_delta` in Python
 
 ### Request body
 
@@ -84,7 +94,15 @@ curl -X POST http://localhost:8000/api/v1/analyze-frame \
 }
 ```
 
-### Response body
+### Request fields
+
+- `procedure_id`: currently `simple-interrupted-suture`
+- `stage_id`: one of the defined procedure stage ids
+- `skill_level`: `beginner` or `intermediate`
+- `image_base64`: raw base64 image bytes, without a data URL prefix
+- `student_question`: optional free-text prompt from the learner
+
+### Successful response
 
 ```json
 {
@@ -109,54 +127,83 @@ curl -X POST http://localhost:8000/api/v1/analyze-frame \
 }
 ```
 
+### Response fields
+
+- `step_status`: `pass`, `retry`, `unclear`, or `unsafe`
+- `confidence`: number from `0` to `1`
+- `visible_observations`: normalized list of visible cues the model could judge
+- `issues`: up to three structured issues
+- `coaching_message`: short coaching summary
+- `next_action`: concrete next step for the learner
+- `overlay_target_ids`: allowed overlay ids for the current stage only
+- `score_delta`: deterministic integer computed by the backend
+
+### Status codes
+
+- `200`: successful analyzed response
+- `404`: unknown procedure or stage
+- `503`: AI analysis is not configured, usually because `AI_API_BASE_URL` is missing
+- `502`: upstream AI request failed or returned invalid JSON
+
 ### Notes
 
-- Requires `ANTHROPIC_API_KEY` in `backend/.env`
-- Returns `503` when Phase 2 AI is not configured
-- Returns `502` if the model response is invalid or the upstream call fails
-- Uses stage-specific allowed `overlay_target_ids`
+- a vision-capable model is required for this route
+- `Qwen/Qwen2.5-VL-3B-Instruct` and `Qwen/Qwen2.5-Omni-7B` are good OpenAI-compatible examples
+- `Qwen3-4B` is not suitable for this route because it is text-only
 
 ## `POST /debrief`
 
-This endpoint generates the review-page debrief from the stored local session history.
+Generates the review-page debrief from stored session history.
 
-### Example request
+### Request body
 
-```bash
-curl -X POST http://localhost:8000/api/v1/debrief \
-  -H 'Content-Type: application/json' \
-  -d '{
-    "session_id": "demo-session",
-    "procedure_id": "simple-interrupted-suture",
-    "skill_level": "beginner",
-    "events": [
-      {
-        "stage_id": "needle_entry",
-        "attempt": 1,
-        "step_status": "retry",
-        "issues": [
-          {
-            "code": "angle_shallow",
-            "severity": "medium",
-            "message": "The angle is too shallow."
-          }
-        ],
-        "score_delta": 13,
-        "coaching_message": "Rotate upward before retrying.",
-        "overlay_target_ids": ["entry_point", "needle_angle"],
-        "visible_observations": [
-          "surface is centered",
-          "entry zone is visible"
-        ],
-        "next_action": "Retry the entry stage.",
-        "confidence": 0.88,
-        "created_at": "2026-03-20T17:10:00.000Z"
-      }
-    ]
-  }'
+```json
+{
+  "session_id": "demo-session",
+  "procedure_id": "simple-interrupted-suture",
+  "skill_level": "beginner",
+  "events": [
+    {
+      "stage_id": "needle_entry",
+      "attempt": 1,
+      "step_status": "retry",
+      "issues": [
+        {
+          "code": "angle_shallow",
+          "severity": "medium",
+          "message": "The angle is too shallow."
+        }
+      ],
+      "score_delta": 13,
+      "coaching_message": "Rotate upward before retrying.",
+      "overlay_target_ids": ["entry_point", "needle_angle"],
+      "visible_observations": [
+        "surface is centered",
+        "entry zone is visible"
+      ],
+      "next_action": "Retry the entry stage.",
+      "confidence": 0.88,
+      "created_at": "2026-03-20T17:10:00.000Z"
+    }
+  ]
+}
 ```
 
-### Response body
+### Event field notes
+
+- `stage_id`: current stage id
+- `attempt`: 1-based attempt number for that stage
+- `step_status`: `pass`, `retry`, `unclear`, or `unsafe`
+- `issues`: structured issue list from a prior analyze response
+- `score_delta`: backend-computed score delta from that attempt
+- `coaching_message`: coaching text from the prior analyze response
+- `overlay_target_ids`: overlay ids used in that attempt
+- `visible_observations`: optional normalized observations from the analyze response
+- `next_action`: optional next-step text
+- `confidence`: optional confidence value
+- `created_at`: ISO timestamp string
+
+### Successful response
 
 ```json
 {
@@ -192,22 +239,35 @@ curl -X POST http://localhost:8000/api/v1/debrief \
 }
 ```
 
+### Response guarantees
+
+- `strengths` always has 3 items
+- `improvement_areas` always has 3 items
+- `practice_plan` always has 3 items
+- `quiz` always has 3 question and answer pairs
+
+### Status codes
+
+- `200`: both AI-backed and fallback debriefs
+- `404`: unknown procedure id
+
 ### Notes
 
-- Empty `events` are supported and return a structured fallback debrief
-- Non-empty `events` use Claude to produce strengths, improvement areas, a 3-step practice plan, and a 3-question quiz
-- Returns `503` when Phase 2 AI is not configured for non-empty sessions
+- empty `events` are supported
+- non-empty `events` prefer model-backed output when available
+- if the AI layer fails or returns a partial payload, the backend fills missing content from deterministic fallback logic
 
-## Frontend-local session model
+## Frontend Session Model
 
-The review page is powered by browser `localStorage`, not by a backend database.
+The review page is powered by browser `localStorage`, not by backend persistence.
 
-Each local session includes:
+Each local session contains:
 
 - procedure id
 - skill level
-- calibration points
-- stage events
+- calibration state
+- per-stage events
 - score deltas
 - coaching messages
-- optional visible observations, confidence, and next-action data for the review debrief
+- optional visible observations, confidence, and next-action data
+- an optional cached debrief keyed by session review signature

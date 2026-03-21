@@ -6,7 +6,7 @@ from pydantic import ValidationError
 from app.core.config import settings
 from app.schemas.analyze import AnalysisDraft, AnalyzeFrameRequest, AnalyzeFrameResponse
 from app.schemas.procedure import ProcedureDefinition, ProcedureStage
-from app.services.anthropic_client import AIResponseError, send_json_message
+from app.services.ai_client import AIResponseError, send_json_message
 from app.services.procedure_loader import load_procedure, load_stage
 from app.services.scoring_service import (
     InvalidOverlayTargetError,
@@ -32,13 +32,22 @@ def analyze_frame_payload(payload: AnalyzeFrameRequest) -> AnalyzeFrameResponse:
     except InvalidOverlayTargetError as exc:
         raise AIResponseError(str(exc)) from exc
 
+    visible_observations = _normalize_visible_observations(
+        stage,
+        analysis_draft.visible_observations,
+    )
+    coaching_message = analysis_draft.coaching_message.strip()
+    next_action = analysis_draft.next_action.strip()
+
     return AnalyzeFrameResponse(
         step_status=analysis_draft.step_status,
         confidence=analysis_draft.confidence,
-        visible_observations=_clean_lines(analysis_draft.visible_observations),
+        visible_observations=visible_observations,
         issues=analysis_draft.issues,
-        coaching_message=analysis_draft.coaching_message.strip(),
-        next_action=analysis_draft.next_action.strip(),
+        coaching_message=coaching_message
+        or f"Reset for the {stage.title.lower()} stage and keep the main objective visible.",
+        next_action=next_action
+        or f"Capture one more clear frame that shows {stage.objective.lower()}",
         overlay_target_ids=overlay_target_ids,
         score_delta=compute_score_delta(
             stage=stage,
@@ -55,8 +64,8 @@ def request_stage_analysis(
     stage: ProcedureStage,
 ) -> AnalysisDraft:
     response_data = send_json_message(
-        model=settings.anthropic_analysis_model,
-        max_tokens=settings.anthropic_analysis_max_tokens,
+        model=settings.ai_analysis_model,
+        max_tokens=settings.ai_analysis_max_tokens,
         system_prompt=_build_analysis_system_prompt(),
         user_content=_build_analysis_user_content(
             payload=payload,
@@ -69,10 +78,10 @@ def request_stage_analysis(
     try:
         draft = AnalysisDraft.model_validate(response_data)
     except ValidationError as exc:
-        raise AIResponseError("Claude returned an invalid analysis payload.") from exc
+        raise AIResponseError("The model server returned an invalid analysis payload.") from exc
 
     if len(draft.issues) > 3:
-        raise AIResponseError("Claude returned too many issues for a single stage.")
+        raise AIResponseError("The model server returned too many issues for a single stage.")
 
     return draft
 
@@ -152,4 +161,28 @@ def _build_analysis_user_content(
 
 
 def _clean_lines(lines: list[str]) -> list[str]:
-    return [line.strip() for line in lines if line.strip()]
+    cleaned: list[str] = []
+    for line in lines:
+        candidate = line.strip()
+        if candidate and candidate not in cleaned:
+            cleaned.append(candidate)
+    return cleaned
+
+
+def _normalize_visible_observations(
+    stage: ProcedureStage,
+    lines: list[str],
+) -> list[str]:
+    cleaned = _clean_lines(lines)[:4]
+    fallback_lines = [
+        f"Review the {stage.title.lower()} stage with focus on {check}."
+        for check in stage.visible_checks
+    ]
+
+    for fallback_line in fallback_lines:
+        if len(cleaned) >= 2:
+            break
+        if fallback_line not in cleaned:
+            cleaned.append(fallback_line)
+
+    return cleaned[:4]

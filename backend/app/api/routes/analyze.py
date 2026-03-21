@@ -2,7 +2,7 @@ from fastapi import APIRouter, HTTPException
 
 from app.schemas.analyze import AnalyzeFrameRequest, AnalyzeFrameResponse
 from app.services import analysis_service
-from app.services.anthropic_client import (
+from app.services.ai_client import (
     AIConfigurationError,
     AIRequestError,
     AIResponseError,

@@ -114,12 +114,19 @@ export type DebriefResponse = {
   quiz: QuizQuestion[];
 };
 
+export type StoredDebrief = {
+  response: DebriefResponse;
+  reviewSignature: string;
+  generatedAt: string;
+};
+
 export type SessionRecord = {
   id: string;
   procedureId: string;
   skillLevel: SkillLevel;
   calibration: Calibration;
   events: SessionEvent[];
+  debrief?: StoredDebrief;
   createdAt: string;
   updatedAt: string;
 };

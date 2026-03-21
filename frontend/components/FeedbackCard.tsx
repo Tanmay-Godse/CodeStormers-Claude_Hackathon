@@ -31,7 +31,7 @@ export function FeedbackCard({
         <div>
           <h2 className="panel-title">Feedback panel</h2>
           <p className="panel-copy">
-            This card renders the live stage analysis returned by the FastAPI Phase 2 service.
+            This card renders the live stage analysis returned by the FastAPI coaching service.
           </p>
         </div>
         <span className="pill">Attempts: {attemptCount}</span>
@@ -40,8 +40,8 @@ export function FeedbackCard({
       {isAnalyzing ? (
         <div className="feedback-block">
           <p className="panel-copy">
-            Capturing the current frame, freezing the preview, and waiting for Claude to
-            return the stage analysis.
+            Capturing the current frame, freezing the preview, and waiting for the model
+            server to return the stage analysis.
           </p>
         </div>
       ) : null}
@@ -84,8 +84,8 @@ export function FeedbackCard({
           <div className="feedback-block">
             <strong>Visible observations</strong>
             <ul className="feedback-list" style={{ marginTop: 12 }}>
-              {response.visible_observations.map((item) => (
-                <li key={item}>{item}</li>
+              {response.visible_observations.map((item, index) => (
+                <li key={`${index}-${item}`}>{item}</li>
               ))}
             </ul>
           </div>

@@ -5,6 +5,7 @@ from app.api.routes import debrief as debrief_route
 from app.main import app
 from app.schemas.analyze import AnalyzeFrameResponse, Issue
 from app.schemas.debrief import DebriefResponse, QuizQuestion
+from app.services.ai_client import AIConfigurationError
 
 client = TestClient(app)
 
@@ -149,3 +150,27 @@ def test_debrief_route_returns_ai_summary(monkeypatch) -> None:
     assert len(data["strengths"]) == 3
     assert len(data["practice_plan"]) == 3
     assert len(data["quiz"]) == 3
+
+
+def test_analyze_route_returns_503_for_missing_ai_configuration(monkeypatch) -> None:
+    def fake_analyze_frame_payload(_payload):
+        raise AIConfigurationError("AI_API_BASE_URL is not configured.")
+
+    monkeypatch.setattr(
+        analyze_route.analysis_service,
+        "analyze_frame_payload",
+        fake_analyze_frame_payload,
+    )
+
+    response = client.post(
+        "/api/v1/analyze-frame",
+        json={
+            "procedure_id": "simple-interrupted-suture",
+            "stage_id": "needle_entry",
+            "skill_level": "beginner",
+            "image_base64": "ZmFrZQ==",
+        },
+    )
+
+    assert response.status_code == 503
+    assert response.json() == {"detail": "AI_API_BASE_URL is not configured."}
