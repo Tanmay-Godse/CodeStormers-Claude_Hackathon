@@ -35,6 +35,9 @@ export default function Home() {
                 >
                   Open Admin Queue
                 </Link>
+                <Link className="button-secondary" href="/library">
+                  Open Learning Library
+                </Link>
                 <a className="button-secondary" href="#how-it-works">
                   Explore the System
                 </a>
@@ -51,6 +54,10 @@ export default function Home() {
                 <article className="signal-card">
                   <span>Output</span>
                   <strong>AI debrief + quiz</strong>
+                </article>
+                <article className="signal-card">
+                  <span>Access</span>
+                  <strong>Equity mode</strong>
                 </article>
               </div>
             </article>
@@ -95,7 +102,7 @@ export default function Home() {
             <span>review-first learning</span>
           </section>
 
-          <div className="feature-grid" id="how-it-works">
+          <div className="feature-grid feature-grid-four" id="how-it-works">
             <article className="feature-card">
               <span className="feature-index">01</span>
               <h2>One believable procedure, treated with depth</h2>
@@ -120,6 +127,14 @@ export default function Home() {
                 practice, not just glanced at once before closing the tab.
               </p>
             </article>
+            <article className="feature-card">
+              <span className="feature-index">04</span>
+              <h2>Access settings built for outside-the-lab practice</h2>
+              <p>
+                Equity mode now adds multilingual feedback, audio coaching, low-bandwidth
+                capture, cheap-phone compatibility, and offline-first practice logging.
+              </p>
+            </article>
           </div>
 
           <section className="landing-bottom-grid">
@@ -139,6 +154,23 @@ export default function Home() {
                 The product is explicitly designed for practice on oranges, bananas, or
                 foam pads. It supports deliberate repetition and instruction, not real
                 patient care or clinical decision-making.
+              </p>
+            </article>
+            <article className="feature-card atmosphere-card">
+              <span className="feature-index">Open library</span>
+              <h2>Share rubrics and benchmark starter assets</h2>
+              <p>
+                The repo now includes a public rubric library, a benchmark manifest starter,
+                and a safer-skills roadmap so the social benefit extends beyond this single
+                app build.
+              </p>
+            </article>
+            <article className="feature-card atmosphere-card">
+              <span className="feature-index">Safer roadmap</span>
+              <h2>Expand into broader, lower-risk skills first</h2>
+              <p>
+                Future modules now prioritize sterile technique, wound dressing, PPE,
+                hand hygiene, and basic instrument handling ahead of flashier procedures.
               </p>
             </article>
           </section>

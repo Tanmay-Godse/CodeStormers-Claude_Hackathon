@@ -12,6 +12,9 @@ AI Clinical Skills Coach is a simulation-only trainer for practicing a simple in
 - Human-in-the-loop validation queue for flagged sessions
 - Hard simulation-only safety gate before analysis
 - Student and admin login entry points
+- Equity mode with multilingual feedback selection, audio coaching, low-bandwidth capture, cheap-phone compatibility, and offline-first practice logging
+- Open learning-library assets for rubrics and benchmark starters
+- Safer-skills roadmap for broader, lower-risk module expansion
 - Auto-detected support for OpenAI-compatible and Anthropic-style AI endpoints
 - Fallback review generation when the debrief AI path is unavailable
 
@@ -19,16 +22,19 @@ AI Clinical Skills Coach is a simulation-only trainer for practicing a simple in
 
 - `docs/local-setup.md`: full setup, run, verification, and troubleshooting guide
 - `docs/api-reference.md`: backend contract, request and response shapes, and error behavior
+- `docs/safer-skills-roadmap.md`: recommended next modules with a safer-skills-first expansion order
 - `backend/README.md`: backend-specific setup, environment, and testing notes
 - `frontend/README.md`: frontend-specific setup, environment, and data-flow notes
+- `open-library/README.md`: public rubric and benchmark starter assets
 
 ## Repository Layout
 
 ```text
 .
-|-- backend/   FastAPI API, procedure contract, AI transport, scoring, tests
-|-- docs/      setup guide and API reference
-`-- frontend/  Next.js landing, trainer, and review UI
+|-- backend/       FastAPI API, procedure contract, AI transport, scoring, tests
+|-- docs/          setup guide, API reference, and roadmap notes
+|-- frontend/      Next.js landing, trainer, review, and library UI
+`-- open-library/  public rubric and benchmark starter assets
 ```
 
 ## AI Provider Support
@@ -130,9 +136,11 @@ pytest
 ## Reliability Notes
 
 - The frontend stores session records and cached debriefs in browser `localStorage`
+- Offline-first practice logs are also stored in browser `localStorage` when equity mode is enabled
 - The review page still renders local session history even if fresh debrief generation fails
 - The trainer requires simulation-only confirmation before analysis
 - Flagged sessions can be escalated into the admin review queue for human validation
+- Equity mode can request multilingual AI feedback and debriefs in English, Spanish, French, or Hindi
 - `POST /api/v1/analyze-frame` returns `503` when live AI analysis is not configured
 - `POST /api/v1/analyze-frame` returns `502` when the upstream AI call fails or returns invalid JSON
 - `POST /api/v1/debrief` falls back to a deterministic study summary when the AI path is unavailable or partial

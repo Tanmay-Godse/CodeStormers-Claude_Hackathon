@@ -88,6 +88,7 @@ def test_analyze_route_returns_ai_response(monkeypatch) -> None:
 def test_debrief_route_returns_ai_summary(monkeypatch) -> None:
     def fake_generate_session_debrief(_payload):
         return DebriefResponse(
+            feedback_language="en",
             strengths=[
                 "You kept the practice surface centered during the attempt.",
                 "Your grip remained stable enough to judge the frame.",
@@ -103,6 +104,12 @@ def test_debrief_route_returns_ai_summary(monkeypatch) -> None:
                 "Practice one slow exit arc while keeping the far side visible.",
                 "Finish with one centered knot attempt and review the frame.",
             ],
+            equity_support_plan=[
+                "Use low-bandwidth mode when the connection is weak.",
+                "Replay the audio coaching if reading is tiring.",
+                "Keep logging practice locally when the network drops.",
+            ],
+            audio_script="Quick coaching recap. Repeat the entry stage with a more perpendicular approach.",
             quiz=[
                 QuizQuestion(
                     question="What does a shallow entry angle usually affect?",
@@ -162,6 +169,9 @@ def test_debrief_route_returns_ai_summary(monkeypatch) -> None:
     data = response.json()
     assert len(data["strengths"]) == 3
     assert len(data["practice_plan"]) == 3
+    assert len(data["equity_support_plan"]) == 3
+    assert data["feedback_language"] == "en"
+    assert data["audio_script"]
     assert len(data["quiz"]) == 3
 
 

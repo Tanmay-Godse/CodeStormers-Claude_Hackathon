@@ -10,6 +10,7 @@ This package contains the FastAPI service for the AI Clinical Skills Coach backe
 - route AI requests to either an OpenAI-compatible or Anthropic-style endpoint
 - validate and normalize AI responses
 - compute `score_delta` deterministically in Python
+- honor multilingual and equity-mode debrief settings
 - return stable fallback debrief content when the debrief AI path is unavailable
 - persist a lightweight human-review queue for flagged sessions
 
@@ -121,6 +122,7 @@ ANTHROPIC_VERSION=2023-06-01
 
 - returns `200` with validated analysis output
 - may return `analysis_mode="blocked"` when the safety gate refuses the image
+- accepts `feedback_language` and `equity_mode` so the AI can tailor coaching for lower-resource practice settings
 - returns `404` for unknown procedures or stages
 - returns `503` when live AI analysis is not configured
 - returns `502` when the upstream AI request fails or returns invalid JSON
@@ -128,6 +130,7 @@ ANTHROPIC_VERSION=2023-06-01
 `POST /api/v1/debrief`:
 
 - returns `200` for both AI-backed and fallback debriefs
+- returns `feedback_language`, `equity_support_plan`, and `audio_script` in addition to the core study summary fields
 - returns `404` for unknown procedures
 - never requires the frontend to send provider-specific auth
 
@@ -145,5 +148,6 @@ The backend test suite covers:
 - overlay-target validation
 - fallback debrief behavior
 - partial debrief backfilling
+- localized fallback debrief behavior
 
 For full app setup and troubleshooting, use `../docs/local-setup.md`.

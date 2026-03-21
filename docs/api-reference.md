@@ -14,7 +14,7 @@ The frontend only talks to this backend. Browser clients do not call Anthropic o
 - request validation is handled by Pydantic
 - backend scoring is deterministic
 - analyze errors are surfaced as HTTP errors
-- debrief responses are normalized into a stable four-part structure
+- debrief responses are normalized into a stable study-summary structure with equity support and audio text
 
 ## `GET /health`
 
@@ -95,7 +95,15 @@ The backend:
   "student_question": "optional question",
   "simulation_confirmation": true,
   "session_id": "session-123",
-  "student_name": "Student User"
+  "student_name": "Student User",
+  "feedback_language": "en",
+  "equity_mode": {
+    "enabled": true,
+    "audio_coaching": true,
+    "low_bandwidth_mode": true,
+    "cheap_phone_mode": false,
+    "offline_practice_logging": true
+  }
 }
 ```
 
@@ -109,6 +117,8 @@ The backend:
 - `simulation_confirmation`: required simulation-only acknowledgement before analysis
 - `session_id`: optional session id used to attach human-review cases
 - `student_name`: optional learner name for the review queue
+- `feedback_language`: requested learner-facing language, currently `en`, `es`, `fr`, or `hi`
+- `equity_mode`: optional access-profile settings that guide response style and lower-resource behavior
 
 ### Successful response
 
@@ -211,6 +221,14 @@ Generates the review-page debrief from stored session history.
   "session_id": "demo-session",
   "procedure_id": "simple-interrupted-suture",
   "skill_level": "beginner",
+  "feedback_language": "en",
+  "equity_mode": {
+    "enabled": true,
+    "audio_coaching": true,
+    "low_bandwidth_mode": true,
+    "cheap_phone_mode": false,
+    "offline_practice_logging": true
+  },
   "events": [
     {
       "stage_id": "needle_entry",
@@ -256,6 +274,7 @@ Generates the review-page debrief from stored session history.
 
 ```json
 {
+  "feedback_language": "en",
   "strengths": [
     "You kept the practice surface centered during the attempt.",
     "Your grip remained stable enough to judge the frame.",
@@ -271,6 +290,12 @@ Generates the review-page debrief from stored session history.
     "Practice one slow exit arc while keeping the far side visible.",
     "Finish with one centered knot attempt and review the frame."
   ],
+  "equity_support_plan": [
+    "Use low-bandwidth mode when the connection is weak.",
+    "Replay the audio coaching if reading is tiring.",
+    "Keep logging practice locally when the network drops."
+  ],
+  "audio_script": "Quick coaching recap. Repeat the entry stage with a more perpendicular approach.",
   "quiz": [
     {
       "question": "What does a shallow entry angle usually affect?",
@@ -293,6 +318,8 @@ Generates the review-page debrief from stored session history.
 - `strengths` always has 3 items
 - `improvement_areas` always has 3 items
 - `practice_plan` always has 3 items
+- `equity_support_plan` always has 3 items
+- `audio_script` is always a single read-aloud coaching paragraph
 - `quiz` always has 3 question and answer pairs
 
 ### Status codes

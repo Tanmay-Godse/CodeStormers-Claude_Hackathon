@@ -4,7 +4,9 @@ import type {
   AuthUser,
   CreateAuthAccountInput,
   DebriefResponse,
+  EquityModeSettings,
   LoginAuthInput,
+  OfflinePracticeLog,
   SessionRecord,
   SkillLevel,
 } from "@/lib/types";
@@ -15,6 +17,17 @@ const AUTH_ACCOUNTS_KEY = "ai-clinical-skills-coach:auth-accounts";
 
 function activeSessionKey(procedureId: string) {
   return `ai-clinical-skills-coach:active:${procedureId}`;
+}
+
+export function createDefaultEquityMode(): EquityModeSettings {
+  return {
+    enabled: false,
+    feedbackLanguage: "en",
+    audioCoaching: false,
+    lowBandwidthMode: false,
+    cheapPhoneMode: false,
+    offlinePracticeLogging: true,
+  };
 }
 
 function ensureBrowserStorage() {
@@ -35,7 +48,17 @@ function readSessions(): Record<string, SessionRecord> {
   }
 
   try {
-    return JSON.parse(raw) as Record<string, SessionRecord>;
+    const parsed = JSON.parse(raw) as Record<string, Partial<SessionRecord>>;
+    const normalized: Record<string, SessionRecord> = {};
+
+    for (const [sessionId, session] of Object.entries(parsed)) {
+      const nextSession = normalizeSessionRecord(sessionId, session);
+      if (nextSession) {
+        normalized[sessionId] = nextSession;
+      }
+    }
+
+    return normalized;
   } catch {
     return {};
   }
@@ -43,6 +66,43 @@ function readSessions(): Record<string, SessionRecord> {
 
 function writeSessions(sessions: Record<string, SessionRecord>) {
   window.localStorage.setItem(SESSIONS_KEY, JSON.stringify(sessions));
+}
+
+function normalizeSessionRecord(
+  sessionId: string,
+  session: Partial<SessionRecord>,
+): SessionRecord | null {
+  if (
+    typeof session?.procedureId !== "string" ||
+    typeof session?.skillLevel !== "string" ||
+    !Array.isArray(session?.events) ||
+    typeof session?.createdAt !== "string" ||
+    typeof session?.updatedAt !== "string"
+  ) {
+    return null;
+  }
+
+  const equityMode = session.equityMode
+    ? {
+        ...createDefaultEquityMode(),
+        ...session.equityMode,
+      }
+    : createDefaultEquityMode();
+
+  return {
+    id: session.id ?? sessionId,
+    procedureId: session.procedureId,
+    skillLevel: session.skillLevel,
+    calibration: session.calibration ?? createDefaultCalibration(),
+    equityMode,
+    events: session.events,
+    offlinePracticeLogs: Array.isArray(session.offlinePracticeLogs)
+      ? (session.offlinePracticeLogs as OfflinePracticeLog[])
+      : [],
+    debrief: session.debrief,
+    createdAt: session.createdAt,
+    updatedAt: session.updatedAt,
+  };
 }
 
 function readAuthAccounts(): AuthAccount[] {
@@ -113,6 +173,18 @@ function toAuthUser(account: AuthAccount): AuthUser {
 function persistAuthUser(user: AuthUser): AuthUser {
   window.localStorage.setItem(AUTH_USER_KEY, JSON.stringify(user));
   return user;
+}
+
+function isValidDebriefResponse(response: Partial<DebriefResponse>): response is DebriefResponse {
+  return (
+    typeof response.feedback_language === "string" &&
+    Array.isArray(response.strengths) &&
+    Array.isArray(response.improvement_areas) &&
+    Array.isArray(response.practice_plan) &&
+    Array.isArray(response.equity_support_plan) &&
+    typeof response.audio_script === "string" &&
+    Array.isArray(response.quiz)
+  );
 }
 
 export function saveSession(session: SessionRecord): SessionRecord {
@@ -244,11 +316,16 @@ export function buildSessionReviewSignature(session: SessionRecord): string {
   return JSON.stringify({
     events: session.events,
     skillLevel: session.skillLevel,
+    equityMode: session.equityMode,
   });
 }
 
 export function getCachedDebrief(session: SessionRecord): DebriefResponse | null {
   if (!session.debrief) {
+    return null;
+  }
+
+  if (!isValidDebriefResponse(session.debrief.response)) {
     return null;
   }
 
@@ -288,7 +365,9 @@ export function createSession(
     procedureId,
     skillLevel,
     calibration: createDefaultCalibration(),
+    equityMode: createDefaultEquityMode(),
     events: [],
+    offlinePracticeLogs: [],
     createdAt: timestamp,
     updatedAt: timestamp,
   };

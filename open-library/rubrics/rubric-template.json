@@ -1,0 +1,35 @@
+{
+  "id": "module-id",
+  "title": "Module Title",
+  "simulation_only": true,
+  "practice_surface": "Describe the safe practice setup",
+  "named_overlay_targets": [
+    {
+      "id": "target_id",
+      "label": "Target label",
+      "description": "What the overlay should call out on screen.",
+      "u": 0.5,
+      "v": 0.5,
+      "color": "#0f6c82"
+    }
+  ],
+  "stages": [
+    {
+      "id": "stage_id",
+      "title": "Stage title",
+      "objective": "What the learner should visibly achieve in this stage.",
+      "visible_checks": [
+        "visible cue one",
+        "visible cue two"
+      ],
+      "common_errors": [
+        "error one",
+        "error two"
+      ],
+      "overlay_targets": [
+        "target_id"
+      ],
+      "score_weight": 10
+    }
+  ]
+}

@@ -1,0 +1,206 @@
+{
+  "id": "simple-interrupted-suture",
+  "title": "Simple Interrupted Suture",
+  "simulation_only": true,
+  "practice_surface": "Orange, banana, or foam pad",
+  "named_overlay_targets": [
+    {
+      "id": "surface_center",
+      "label": "Practice surface",
+      "description": "Center the practice surface inside the framing area.",
+      "u": 0.5,
+      "v": 0.5,
+      "color": "#0f6c82"
+    },
+    {
+      "id": "needle_driver_grip",
+      "label": "Driver grip",
+      "description": "Where the needle driver grip should stay stable.",
+      "u": 0.28,
+      "v": 0.3,
+      "color": "#2e8b57"
+    },
+    {
+      "id": "entry_point",
+      "label": "Entry point",
+      "description": "The expected starting point for the first bite.",
+      "u": 0.38,
+      "v": 0.48,
+      "color": "#d97706"
+    },
+    {
+      "id": "needle_angle",
+      "label": "Needle angle",
+      "description": "Visual guide for a more perpendicular entry angle.",
+      "u": 0.44,
+      "v": 0.38,
+      "color": "#c2410c"
+    },
+    {
+      "id": "exit_point",
+      "label": "Exit point",
+      "description": "Where the needle tip should emerge on the far side.",
+      "u": 0.62,
+      "v": 0.49,
+      "color": "#7c3aed"
+    },
+    {
+      "id": "thread_path",
+      "label": "Thread path",
+      "description": "Keep the suture line visible and controlled as you pull through.",
+      "u": 0.56,
+      "v": 0.56,
+      "color": "#0f766e"
+    },
+    {
+      "id": "knot_center",
+      "label": "Knot center",
+      "description": "Target spot for a centered final knot.",
+      "u": 0.5,
+      "v": 0.52,
+      "color": "#b91c1c"
+    },
+    {
+      "id": "wound_line_center",
+      "label": "Wound line center",
+      "description": "The midline that the stitch should visually align with.",
+      "u": 0.5,
+      "v": 0.48,
+      "color": "#1d4ed8"
+    }
+  ],
+  "stages": [
+    {
+      "id": "setup",
+      "title": "Setup",
+      "objective": "Prepare the surface and tools so the practice field is clearly framed.",
+      "visible_checks": [
+        "practice surface visible",
+        "needle driver visible",
+        "suture visible"
+      ],
+      "common_errors": [
+        "surface out of frame",
+        "tool missing",
+        "dark or blurry image"
+      ],
+      "overlay_targets": [
+        "surface_center"
+      ],
+      "score_weight": 10
+    },
+    {
+      "id": "grip",
+      "title": "Grip",
+      "objective": "Hold the needle driver with a stable grip before entry.",
+      "visible_checks": [
+        "needle driver visible",
+        "stable hand position"
+      ],
+      "common_errors": [
+        "grip too close to the tip",
+        "unstable wrist posture"
+      ],
+      "overlay_targets": [
+        "needle_driver_grip"
+      ],
+      "score_weight": 10
+    },
+    {
+      "id": "needle_entry",
+      "title": "Needle Entry",
+      "objective": "Approach the surface at a confident entry angle for the first bite.",
+      "visible_checks": [
+        "entry point visible",
+        "needle angle acceptable",
+        "instrument aligned with the target"
+      ],
+      "common_errors": [
+        "angle too shallow",
+        "entry point drifted off target",
+        "needle not aligned with the practice line"
+      ],
+      "overlay_targets": [
+        "entry_point",
+        "needle_angle"
+      ],
+      "score_weight": 15
+    },
+    {
+      "id": "needle_exit",
+      "title": "Needle Exit",
+      "objective": "Complete the arc so the needle exits across the wound line.",
+      "visible_checks": [
+        "exit point visible",
+        "arc completed across the wound line"
+      ],
+      "common_errors": [
+        "needle exits too early",
+        "exit point not visible",
+        "arc incomplete"
+      ],
+      "overlay_targets": [
+        "exit_point",
+        "wound_line_center"
+      ],
+      "score_weight": 15
+    },
+    {
+      "id": "pull_through",
+      "title": "Pull Through",
+      "objective": "Pull the suture through without losing control of tension.",
+      "visible_checks": [
+        "thread visible",
+        "tension controlled"
+      ],
+      "common_errors": [
+        "thread tangled",
+        "tension too loose",
+        "tension too aggressive"
+      ],
+      "overlay_targets": [
+        "thread_path"
+      ],
+      "score_weight": 10
+    },
+    {
+      "id": "knot_tie",
+      "title": "Knot Tie",
+      "objective": "Form a centered knot that looks neat in the practice field.",
+      "visible_checks": [
+        "knot visible",
+        "knot centered",
+        "thread tails controlled"
+      ],
+      "common_errors": [
+        "knot off center",
+        "over-tightened knot",
+        "thread twisting during tie"
+      ],
+      "overlay_targets": [
+        "knot_center"
+      ],
+      "score_weight": 20
+    },
+    {
+      "id": "final_check",
+      "title": "Final Check",
+      "objective": "Review the finished stitch for overall presentation and alignment.",
+      "visible_checks": [
+        "approximation looks presentable",
+        "final frame is clear",
+        "knot and wound line are visible"
+      ],
+      "common_errors": [
+        "final frame blurry",
+        "stitch looks misaligned",
+        "knot obscures the field"
+      ],
+      "overlay_targets": [
+        "wound_line_center",
+        "knot_center"
+      ],
+      "score_weight": 20
+    }
+  ]
+}

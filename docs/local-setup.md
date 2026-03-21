@@ -1,6 +1,6 @@
 # Local Setup Guide
 
-This guide walks through the full local setup for AI Clinical Skills Coach, including OpenAI-compatible and Anthropic-style AI backends.
+This guide walks through the full local setup for AI Clinical Skills Coach, including OpenAI-compatible and Anthropic-style AI backends, the local account flow, and the new equity-mode features.
 
 ## 1. Prerequisites
 
@@ -192,7 +192,23 @@ http://localhost:3000
 
 You should see the landing page for AI Clinical Skills Coach.
 
-## 7. First-Run Verification
+## 7. Create a Local Account
+
+Before entering the trainer or admin queue, open the local account flow:
+
+```text
+http://localhost:3000/login
+```
+
+On first use:
+
+- choose `Create Account`
+- enter a display name, username, password, and role
+- submit the form to create a browser-local demo account
+
+Students should use the `student` role for the trainer and review flow. Faculty or senior reviewers should use the `admin` role for the validation queue.
+
+## 8. First-Run Verification
 
 Before testing the trainer UI, verify the backend from another terminal.
 
@@ -226,7 +242,7 @@ This should return:
 ```bash
 curl -X POST http://localhost:8001/api/v1/analyze-frame \
   -H 'Content-Type: application/json' \
-  -d '{"procedure_id":"simple-interrupted-suture","stage_id":"needle_entry","skill_level":"beginner","image_base64":"ZmFrZQ==","simulation_confirmation":true}'
+  -d '{"procedure_id":"simple-interrupted-suture","stage_id":"needle_entry","skill_level":"beginner","image_base64":"ZmFrZQ==","simulation_confirmation":true,"feedback_language":"en","equity_mode":{"enabled":true,"audio_coaching":true,"low_bandwidth_mode":true,"cheap_phone_mode":false,"offline_practice_logging":true}}'
 ```
 
 With a valid AI endpoint and a vision-capable model, this should return a response containing:
@@ -253,13 +269,48 @@ If the upstream model request fails or returns invalid JSON, this route returns 
 ```bash
 curl -X POST http://localhost:8001/api/v1/debrief \
   -H 'Content-Type: application/json' \
-  -d '{"session_id":"demo-session","procedure_id":"simple-interrupted-suture","skill_level":"beginner","events":[]}'
+  -d '{"session_id":"demo-session","procedure_id":"simple-interrupted-suture","skill_level":"beginner","feedback_language":"en","equity_mode":{"enabled":true,"audio_coaching":true,"low_bandwidth_mode":true,"cheap_phone_mode":false,"offline_practice_logging":true},"events":[]}'
 ```
 
 This route always returns a structured debrief shape:
 
 - with empty `events`, it returns a simple default study summary
 - with non-empty `events`, it prefers model-backed output
+- it now also returns `equity_support_plan`, `audio_script`, and `feedback_language`
+
+## 9. Trainer Walkthrough
+
+Once the backend and frontend are live:
+
+1. Sign in with a local `student` account.
+2. Open the suturing trainer.
+3. Enable the camera and confirm the simulation-only checkbox.
+4. Optionally turn on `Equity mode` to test:
+   - multilingual feedback
+   - audio coaching
+   - low-bandwidth image mode
+   - cheap-phone compatibility
+   - offline-first practice logging
+5. Capture a step with `Check My Step`.
+6. Finish the flow and open the review page to see:
+   - the AI debrief
+   - the equity support plan
+   - the audio coaching script
+   - any offline-only practice logs
+
+## 10. Explore the Open Library
+
+The app now exposes a public learning-library page at:
+
+```text
+http://localhost:3000/library
+```
+
+That page points to the repository assets in:
+
+- `open-library/rubrics/`
+- `open-library/benchmark/`
+- `docs/safer-skills-roadmap.md`
 - if the debrief AI path fails or returns a partial shape, the backend falls back to deterministic content
 
 ## 8. Trainer Flow

@@ -1,6 +1,10 @@
 "use client";
 
+import { useEffect, useState } from "react";
+
+import { canUseSpeechSynthesis, speakText, stopSpeechPlayback } from "@/lib/audio";
 import type { AnalyzeFrameResponse } from "@/lib/types";
+import type { FeedbackLanguage } from "@/lib/types";
 
 type FeedbackCardProps = {
   response: AnalyzeFrameResponse | null;
@@ -8,6 +12,8 @@ type FeedbackCardProps = {
   attemptCount: number;
   isAnalyzing: boolean;
   error: string | null;
+  audioEnabled?: boolean;
+  feedbackLanguage: FeedbackLanguage;
 };
 
 function getStatusClass(status: AnalyzeFrameResponse["step_status"]) {
@@ -24,7 +30,31 @@ export function FeedbackCard({
   attemptCount,
   isAnalyzing,
   error,
+  audioEnabled = false,
+  feedbackLanguage,
 }: FeedbackCardProps) {
+  const [isSpeaking, setIsSpeaking] = useState(false);
+
+  useEffect(() => {
+    return () => {
+      stopSpeechPlayback();
+    };
+  }, []);
+
+  function handlePlayCoachingAudio() {
+    if (!response) {
+      return;
+    }
+
+    const didSpeak = speakText(response.coaching_message, feedbackLanguage);
+    setIsSpeaking(didSpeak);
+  }
+
+  function handleStopCoachingAudio() {
+    stopSpeechPlayback();
+    setIsSpeaking(false);
+  }
+
   return (
     <article className="panel">
       <div className="panel-header">
@@ -143,6 +173,26 @@ export function FeedbackCard({
             <p className="feedback-copy" style={{ marginTop: 12 }}>
               {response.coaching_message}
             </p>
+            {audioEnabled && canUseSpeechSynthesis() ? (
+              <div className="button-row" style={{ marginTop: 12 }}>
+                <button
+                  className="button-secondary"
+                  onClick={handlePlayCoachingAudio}
+                  type="button"
+                >
+                  Play Audio Coaching
+                </button>
+                {isSpeaking ? (
+                  <button
+                    className="button-ghost"
+                    onClick={handleStopCoachingAudio}
+                    type="button"
+                  >
+                    Stop Audio
+                  </button>
+                ) : null}
+              </div>
+            ) : null}
           </div>
 
           <div className="feedback-block">

@@ -2,7 +2,7 @@ from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field
 
-from app.schemas.analyze import Issue
+from app.schemas.analyze import EquityModeConfig, FeedbackLanguage, Issue
 
 
 class DebriefEvent(BaseModel):
@@ -34,15 +34,20 @@ class DebriefRequest(BaseModel):
     session_id: str
     procedure_id: str
     skill_level: Literal["beginner", "intermediate"]
+    feedback_language: FeedbackLanguage = "en"
+    equity_mode: EquityModeConfig = Field(default_factory=EquityModeConfig)
     events: list[DebriefEvent] = Field(default_factory=list)
 
 
 class DebriefResponse(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
+    feedback_language: FeedbackLanguage = "en"
     strengths: list[str] = Field(min_length=3, max_length=3)
     improvement_areas: list[str] = Field(min_length=3, max_length=3)
     practice_plan: list[str] = Field(min_length=3, max_length=3)
+    equity_support_plan: list[str] = Field(min_length=3, max_length=3)
+    audio_script: str
     quiz: list[QuizQuestion] = Field(min_length=3, max_length=3)
 
 

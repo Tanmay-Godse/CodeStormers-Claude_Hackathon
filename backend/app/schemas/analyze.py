@@ -2,6 +2,8 @@ from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field
 
+FeedbackLanguage = Literal["en", "es", "fr", "hi"]
+
 
 class Issue(BaseModel):
     model_config = ConfigDict(extra="forbid")
@@ -9,6 +11,16 @@ class Issue(BaseModel):
     code: str
     severity: Literal["low", "medium", "high"]
     message: str
+
+
+class EquityModeConfig(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    enabled: bool = False
+    audio_coaching: bool = False
+    low_bandwidth_mode: bool = False
+    cheap_phone_mode: bool = False
+    offline_practice_logging: bool = False
 
 
 class AnalyzeFrameRequest(BaseModel):
@@ -22,6 +34,8 @@ class AnalyzeFrameRequest(BaseModel):
     simulation_confirmation: bool = False
     session_id: str | None = None
     student_name: str | None = None
+    feedback_language: FeedbackLanguage = "en"
+    equity_mode: EquityModeConfig = Field(default_factory=EquityModeConfig)
 
 
 class SafetyGateResult(BaseModel):

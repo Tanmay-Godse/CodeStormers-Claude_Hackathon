@@ -28,13 +28,21 @@ export type CameraFeedHandle = {
 
 type CameraFeedProps = {
   frozenFrameUrl: string | null;
+  lowBandwidthMode?: boolean;
+  cheapPhoneMode?: boolean;
   onReadyChange?: (ready: boolean) => void;
 };
 
-const MAX_IMAGE_LONG_EDGE = 1200;
-
 export const CameraFeed = forwardRef<CameraFeedHandle, CameraFeedProps>(
-  function CameraFeed({ frozenFrameUrl, onReadyChange }, ref) {
+  function CameraFeed(
+    {
+      frozenFrameUrl,
+      lowBandwidthMode = false,
+      cheapPhoneMode = false,
+      onReadyChange,
+    },
+    ref,
+  ) {
     const videoRef = useRef<HTMLVideoElement>(null);
     const canvasRef = useRef<HTMLCanvasElement>(null);
     const streamRef = useRef<MediaStream | null>(null);
@@ -71,8 +79,8 @@ export const CameraFeed = forwardRef<CameraFeedHandle, CameraFeedProps>(
           audio: false,
           video: {
             facingMode: "environment",
-            width: { ideal: 1280 },
-            height: { ideal: 960 },
+            width: { ideal: lowBandwidthMode || cheapPhoneMode ? 960 : 1280 },
+            height: { ideal: lowBandwidthMode || cheapPhoneMode ? 720 : 960 },
           },
         });
 
@@ -94,7 +102,7 @@ export const CameraFeed = forwardRef<CameraFeedHandle, CameraFeedProps>(
         );
         onReadyChange?.(false);
       }
-    }, [onReadyChange]);
+    }, [cheapPhoneMode, lowBandwidthMode, onReadyChange]);
 
     const captureFrame = useCallback(async (): Promise<CapturedFrame | null> => {
       const video = videoRef.current;
@@ -104,9 +112,11 @@ export const CameraFeed = forwardRef<CameraFeedHandle, CameraFeedProps>(
         return null;
       }
 
+      const maxLongEdge = lowBandwidthMode ? 720 : 1200;
+      const imageQuality = lowBandwidthMode ? 0.62 : 0.86;
       const scale = Math.min(
         1,
-        MAX_IMAGE_LONG_EDGE / Math.max(video.videoWidth, video.videoHeight),
+        maxLongEdge / Math.max(video.videoWidth, video.videoHeight),
       );
       const width = Math.round(video.videoWidth * scale);
       const height = Math.round(video.videoHeight * scale);
@@ -121,11 +131,11 @@ export const CameraFeed = forwardRef<CameraFeedHandle, CameraFeedProps>(
       }
 
       context.drawImage(video, 0, 0, width, height);
-      const previewUrl = canvas.toDataURL("image/jpeg", 0.86);
+      const previewUrl = canvas.toDataURL("image/jpeg", imageQuality);
       const [, base64 = ""] = previewUrl.split(",");
 
       return { base64, previewUrl, width, height };
-    }, []);
+    }, [lowBandwidthMode]);
 
     useEffect(() => {
       return () => {

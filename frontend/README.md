@@ -5,13 +5,15 @@ This package contains the Next.js frontend for the AI Clinical Skills Coach trai
 ## Responsibilities
 
 - landing page and entry flow
-- student and admin login screens
+- student and admin login screens with local account creation
 - trainer page with camera access and frame capture
 - calibration UI and overlay rendering
 - stage-by-stage feedback display
 - browser-local session persistence
 - review page hydration and debrief caching
 - admin review queue for human validation
+- equity mode for multilingual feedback, audio coaching, low-bandwidth capture, cheap-phone compatibility, and offline-first practice logging
+- open learning-library page for public rubric and benchmark assets
 
 ## Setup
 
@@ -40,7 +42,8 @@ This should point at the FastAPI backend, not directly at your model server.
 ## Routes
 
 - `/`: landing page and project framing
-- `/login`: local role login for students and admin reviewers
+- `/login`: local account sign-in and create-account flow for students and admin reviewers
+- `/library`: open learning-library page for rubric and benchmark assets
 - `/admin/reviews`: human-in-the-loop validation queue
 - `/train/[procedure]`: live trainer flow with capture, analyze, stage progression, and review handoff
 - `/review/[sessionId]`: session summary, cached or fresh debrief, and per-attempt history
@@ -54,7 +57,9 @@ What is stored:
 - active session id per procedure
 - local auth user for the selected role
 - calibration state
+- equity-mode settings per session
 - per-stage attempt history
+- offline-only practice logs
 - score deltas and coaching text
 - cached debrief output keyed by a review signature
 
@@ -71,8 +76,10 @@ How debrief caching works:
 - the browser never sends Anthropic or OpenAI-compatible API keys directly
 - analyze requests are only sent on `Check My Step`
 - the trainer sends `simulation_confirmation` before analysis
+- the trainer can send `feedback_language` and `equity_mode` for multilingual and lower-resource coaching
 - blocked or low-confidence responses can surface `review_case_id` values from the backend queue
 - the review page debrief request is driven from stored session events
+- the review page can play read-aloud coaching when equity mode audio is enabled and browser speech synthesis is available
 
 ## Common Issues
 
@@ -87,5 +94,9 @@ Check that `NEXT_PUBLIC_API_BASE_URL` points at a running backend and that `/api
 ### Review text looks stale
 
 The cached debrief is invalidated automatically when the session event history changes. If you want to reset everything, start a fresh session from the trainer UI.
+
+### I want to test offline-first practice logging
+
+Enable equity mode in the trainer, turn on `Offline-first practice logging`, then disconnect the network before pressing `Check My Step`. The attempt will be saved locally and displayed on the review page even without a live analysis response.
 
 For full project setup, use `../docs/local-setup.md`.

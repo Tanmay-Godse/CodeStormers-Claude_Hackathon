@@ -71,6 +71,8 @@ def test_debrief_service_returns_local_fallback_for_empty_session() -> None:
     assert len(response.strengths) == 3
     assert len(response.improvement_areas) == 3
     assert len(response.practice_plan) == 3
+    assert len(response.equity_support_plan) == 3
+    assert response.audio_script
     assert len(response.quiz) == 3
 
 
@@ -145,6 +147,8 @@ def test_debrief_service_falls_back_when_ai_request_fails(monkeypatch) -> None:
 
     assert len(response.strengths) == 3
     assert len(response.practice_plan) == 3
+    assert len(response.equity_support_plan) == 3
+    assert response.audio_script
     assert len(response.quiz) == 3
     assert "needle entry" in response.practice_plan[0].lower()
 
@@ -169,6 +173,12 @@ def test_debrief_service_backfills_quiz_when_ai_payload_is_partial(monkeypatch) 
                 "Use the overlay before advancing.",
                 "Reopen review after the retry.",
             ],
+            "equity_support_plan": [
+                "Use low-bandwidth mode when needed.",
+                "Replay audio coaching for accessibility.",
+                "Keep logging attempts offline if the network drops.",
+            ],
+            "audio_script": "Quick recap. Retry the entry stage once.",
             "quiz": [
                 {
                     "question": "   ",
@@ -202,7 +212,24 @@ def test_debrief_service_backfills_quiz_when_ai_payload_is_partial(monkeypatch) 
     )
 
     assert response.strengths[0] == "You kept the field centered."
+    assert response.audio_script == "Quick recap. Retry the entry stage once."
     assert len(response.quiz) == 3
+
+
+def test_debrief_service_localizes_fallback_response() -> None:
+    response = debrief_service.generate_session_debrief(
+        DebriefRequest(
+            session_id="session-456",
+            procedure_id="simple-interrupted-suture",
+            skill_level="beginner",
+            feedback_language="es",
+            events=[],
+        )
+    )
+
+    assert response.feedback_language == "es"
+    assert "simulacion" in response.strengths[0].lower()
+    assert "coaching" in response.audio_script.lower() or "resumen" in response.audio_script.lower()
 
 
 def test_safety_service_blocks_without_simulation_confirmation() -> None:

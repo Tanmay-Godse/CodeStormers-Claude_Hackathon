@@ -1,5 +1,9 @@
 "use client";
 
+import { useEffect, useState } from "react";
+
+import { canUseSpeechSynthesis, speakText, stopSpeechPlayback } from "@/lib/audio";
+import { getFeedbackLanguageLabel } from "@/lib/equity";
 import type {
   DebriefResponse,
   ProcedureDefinition,
@@ -14,6 +18,7 @@ type ReviewSummaryProps = {
   debrief: DebriefResponse | null;
   isDebriefLoading: boolean;
   debriefError: string | null;
+  isOnline: boolean;
   reviewCases: ReviewCase[];
 };
 
@@ -34,10 +39,35 @@ export function ReviewSummary({
   debrief,
   isDebriefLoading,
   debriefError,
+  isOnline,
   reviewCases,
 }: ReviewSummaryProps) {
   const totalScore = session.events.reduce((sum, event) => sum + event.scoreDelta, 0);
   const latestFeedback = session.events.at(-1)?.coachingMessage ?? "No coaching recorded yet.";
+  const [isSpeaking, setIsSpeaking] = useState(false);
+
+  useEffect(() => {
+    return () => {
+      stopSpeechPlayback();
+    };
+  }, []);
+
+  function handlePlayDebriefAudio() {
+    if (!debrief) {
+      return;
+    }
+
+    const didSpeak = speakText(
+      debrief.audio_script,
+      session.equityMode.feedbackLanguage,
+    );
+    setIsSpeaking(didSpeak);
+  }
+
+  function handleStopDebriefAudio() {
+    stopSpeechPlayback();
+    setIsSpeaking(false);
+  }
 
   return (
     <section className="review-grid">
@@ -75,6 +105,14 @@ export function ReviewSummary({
               })}
             </p>
           </article>
+          <article className="metric-card">
+            <p className="metric-label">Equity mode</p>
+            <p className="metric-value">
+              {session.equityMode.enabled
+                ? getFeedbackLanguageLabel(session.equityMode.feedbackLanguage)
+                : "Standard"}
+            </p>
+          </article>
         </div>
 
         <article className="review-card" style={{ marginTop: 22 }}>
@@ -92,6 +130,10 @@ export function ReviewSummary({
             <strong>Session debrief</strong>
             <span className="pill">Study summary</span>
           </header>
+          <p className="review-subtle" style={{ marginTop: 12 }}>
+            Connection: {isOnline ? "online" : "offline"}. Feedback language:{" "}
+            {getFeedbackLanguageLabel(session.equityMode.feedbackLanguage)}.
+          </p>
           {isDebriefLoading ? (
             <p className="review-subtle">
               Building the session debrief from the stored stage history.
@@ -142,6 +184,44 @@ export function ReviewSummary({
                   ))}
                 </ol>
               </section>
+
+              <section className="debrief-block">
+                <strong>Equity support plan</strong>
+                <ul className="feedback-list" style={{ marginTop: 12 }}>
+                  {debrief.equity_support_plan.map((item, index) => (
+                    <li key={`${index}-${item}`}>{item}</li>
+                  ))}
+                </ul>
+              </section>
+
+              {session.equityMode.enabled &&
+              session.equityMode.audioCoaching &&
+              canUseSpeechSynthesis() ? (
+                <section className="debrief-block">
+                  <strong>Audio coaching</strong>
+                  <p className="review-subtle" style={{ marginTop: 10 }}>
+                    {debrief.audio_script}
+                  </p>
+                  <div className="button-row" style={{ marginTop: 12 }}>
+                    <button
+                      className="button-secondary"
+                      onClick={handlePlayDebriefAudio}
+                      type="button"
+                    >
+                      Play Debrief Audio
+                    </button>
+                    {isSpeaking ? (
+                      <button
+                        className="button-ghost"
+                        onClick={handleStopDebriefAudio}
+                        type="button"
+                      >
+                        Stop Audio
+                      </button>
+                    ) : null}
+                  </div>
+                </section>
+              ) : null}
 
               <section className="debrief-block">
                 <strong>Quick quiz</strong>
@@ -209,6 +289,37 @@ export function ReviewSummary({
                   </p>
                   {caseItem.reviewer_notes ? (
                     <p className="review-subtle">Reviewer note: {caseItem.reviewer_notes}</p>
+                  ) : null}
+                </li>
+              ))}
+            </ul>
+          )}
+        </article>
+
+        <article className="review-card" style={{ marginTop: 20 }}>
+          <header>
+            <strong>Offline practice logs</strong>
+            <span className="pill">{session.offlinePracticeLogs.length} saved log(s)</span>
+          </header>
+          {session.offlinePracticeLogs.length === 0 ? (
+            <p className="review-subtle">
+              No offline-only practice attempts were recorded for this session.
+            </p>
+          ) : (
+            <ul className="timeline-list">
+              {session.offlinePracticeLogs.map((log) => (
+                <li className="timeline-item" key={log.id}>
+                  <header>
+                    <strong>{toStageLabel(log.stageId, procedure)}</strong>
+                    <span className="pill">offline saved</span>
+                  </header>
+                  <p className="review-subtle">
+                    Frame {log.frameWidth}x{log.frameHeight}. Low-bandwidth:{" "}
+                    {log.lowBandwidthMode ? "yes" : "no"}. Cheap-phone mode:{" "}
+                    {log.cheapPhoneMode ? "yes" : "no"}.
+                  </p>
+                  {log.note ? (
+                    <p className="review-subtle">Learner note: {log.note}</p>
                   ) : null}
                 </li>
               ))}

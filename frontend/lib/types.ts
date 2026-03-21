@@ -5,6 +5,7 @@ export type UserRole = "student" | "admin";
 export type SafetyGateStatus = "cleared" | "blocked" | "needs_human_review";
 export type ReviewCaseStatus = "pending" | "resolved";
 export type AuthMode = "sign-in" | "create-account";
+export type FeedbackLanguage = "en" | "es" | "fr" | "hi";
 
 export type Point = {
   x: number;
@@ -52,6 +53,34 @@ export type Issue = {
   message: string;
 };
 
+export type EquityModeSettings = {
+  enabled: boolean;
+  feedbackLanguage: FeedbackLanguage;
+  audioCoaching: boolean;
+  lowBandwidthMode: boolean;
+  cheapPhoneMode: boolean;
+  offlinePracticeLogging: boolean;
+};
+
+export type ApiEquityMode = {
+  enabled: boolean;
+  audio_coaching: boolean;
+  low_bandwidth_mode: boolean;
+  cheap_phone_mode: boolean;
+  offline_practice_logging: boolean;
+};
+
+export type OfflinePracticeLog = {
+  id: string;
+  stageId: string;
+  note?: string;
+  frameWidth: number;
+  frameHeight: number;
+  lowBandwidthMode: boolean;
+  cheapPhoneMode: boolean;
+  createdAt: string;
+};
+
 export type AnalyzeFrameRequest = {
   procedure_id: string;
   stage_id: string;
@@ -61,6 +90,8 @@ export type AnalyzeFrameRequest = {
   simulation_confirmation: boolean;
   session_id?: string;
   student_name?: string;
+  feedback_language: FeedbackLanguage;
+  equity_mode: ApiEquityMode;
 };
 
 export type SafetyGateResult = {
@@ -128,13 +159,18 @@ export type DebriefRequest = {
   session_id: string;
   procedure_id: string;
   skill_level: SkillLevel;
+  feedback_language: FeedbackLanguage;
+  equity_mode: ApiEquityMode;
   events: DebriefEventRequest[];
 };
 
 export type DebriefResponse = {
+  feedback_language: FeedbackLanguage;
   strengths: string[];
   improvement_areas: string[];
   practice_plan: string[];
+  equity_support_plan: string[];
+  audio_script: string;
   quiz: QuizQuestion[];
 };
 
@@ -212,7 +248,9 @@ export type SessionRecord = {
   procedureId: string;
   skillLevel: SkillLevel;
   calibration: Calibration;
+  equityMode: EquityModeSettings;
   events: SessionEvent[];
+  offlinePracticeLogs: OfflinePracticeLog[];
   debrief?: StoredDebrief;
   createdAt: string;
   updatedAt: string;

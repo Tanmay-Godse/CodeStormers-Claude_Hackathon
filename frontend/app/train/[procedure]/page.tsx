@@ -9,25 +9,33 @@ import { CalibrationOverlay } from "@/components/CalibrationOverlay";
 import { FeedbackCard } from "@/components/FeedbackCard";
 import { OverlayRenderer } from "@/components/OverlayRenderer";
 import { ProcedureStepper } from "@/components/ProcedureStepper";
+import {
+  FEEDBACK_LANGUAGE_OPTIONS,
+  getFeedbackLanguageLabel,
+  toApiEquityMode,
+} from "@/lib/equity";
 import { analyzeFrame, getProcedure } from "@/lib/api";
 import { createDefaultCalibration } from "@/lib/geometry";
 import {
   clearAuthUser,
+  createDefaultEquityMode,
   getAuthUser,
   getOrCreateActiveSession,
   saveSession,
   startFreshSession,
 } from "@/lib/storage";
 import type {
-  AnalyzeFrameResponse,
-  AuthUser,
-  Calibration,
-  CalibrationMode,
-  ProcedureDefinition,
-  SessionEvent,
-  SessionRecord,
-  SkillLevel,
-} from "@/lib/types";
+    AnalyzeFrameResponse,
+    AuthUser,
+    Calibration,
+    CalibrationMode,
+    EquityModeSettings,
+    OfflinePracticeLog,
+    ProcedureDefinition,
+    SessionEvent,
+    SessionRecord,
+    SkillLevel,
+  } from "@/lib/types";
 
 function findNextStageId(
   procedure: ProcedureDefinition,
@@ -75,6 +83,9 @@ export default function TrainProcedurePage() {
   const [session, setSession] = useState<SessionRecord | null>(null);
   const [currentStageId, setCurrentStageId] = useState("");
   const [skillLevel, setSkillLevel] = useState<SkillLevel>("beginner");
+  const [equityMode, setEquityMode] = useState<EquityModeSettings>(
+    createDefaultEquityMode(),
+  );
   const [calibration, setCalibration] = useState<Calibration>(
     createDefaultCalibration(),
   );
@@ -90,6 +101,24 @@ export default function TrainProcedurePage() {
   const [frozenFrameUrl, setFrozenFrameUrl] = useState<string | null>(null);
   const [studentQuestion, setStudentQuestion] = useState("");
   const [simulationConfirmed, setSimulationConfirmed] = useState(false);
+  const [isOnline, setIsOnline] = useState(true);
+
+  useEffect(() => {
+    if (typeof window === "undefined") {
+      return;
+    }
+
+    const syncOnlineStatus = () => setIsOnline(window.navigator.onLine);
+    syncOnlineStatus();
+
+    window.addEventListener("online", syncOnlineStatus);
+    window.addEventListener("offline", syncOnlineStatus);
+
+    return () => {
+      window.removeEventListener("online", syncOnlineStatus);
+      window.removeEventListener("offline", syncOnlineStatus);
+    };
+  }, []);
 
   useEffect(() => {
     const nextUser = getAuthUser();
@@ -138,6 +167,7 @@ export default function TrainProcedurePage() {
         setProcedure(nextProcedure);
         setSession(activeSession);
         setSkillLevel(activeSession.skillLevel);
+        setEquityMode(activeSession.equityMode);
         setCalibration(activeSession.calibration);
         setCurrentStageId(getSuggestedStageId(nextProcedure, activeSession));
       } catch (error) {
@@ -211,6 +241,21 @@ export default function TrainProcedurePage() {
     });
   }
 
+  function handleEquityModeChange(nextEquityMode: EquityModeSettings) {
+    setEquityMode(nextEquityMode);
+
+    if (!session) {
+      return;
+    }
+
+    persistSession({
+      ...session,
+      equityMode: nextEquityMode,
+      debrief: undefined,
+      updatedAt: new Date().toISOString(),
+    });
+  }
+
   function handleCalibrationChange(nextCalibration: Calibration) {
     setCalibration(nextCalibration);
 
@@ -230,7 +275,12 @@ export default function TrainProcedurePage() {
       return;
     }
 
-    const freshSession = startFreshSession(procedure.id, skillLevel);
+    const rawFreshSession = startFreshSession(procedure.id, skillLevel);
+    const freshSession = saveSession({
+      ...rawFreshSession,
+      equityMode,
+      updatedAt: new Date().toISOString(),
+    });
     setSession(freshSession);
     setCalibration(freshSession.calibration);
     setCurrentStageId(procedure.stages[0]?.id ?? "");
@@ -240,6 +290,34 @@ export default function TrainProcedurePage() {
     setStudentQuestion("");
     setSimulationConfirmed(false);
     setAnalyzeError(null);
+  }
+
+  function appendOfflinePracticeLog(
+    sessionSnapshot: SessionRecord,
+    frame: { width: number; height: number },
+    reason: string,
+  ) {
+    const offlineLog: OfflinePracticeLog = {
+      id: crypto.randomUUID(),
+      stageId: currentStageId,
+      note: studentQuestion.trim() || undefined,
+      frameWidth: frame.width,
+      frameHeight: frame.height,
+      lowBandwidthMode: equityMode.lowBandwidthMode,
+      cheapPhoneMode: equityMode.cheapPhoneMode,
+      createdAt: new Date().toISOString(),
+    };
+
+    persistSession({
+      ...sessionSnapshot,
+      equityMode,
+      debrief: undefined,
+      offlinePracticeLogs: [...sessionSnapshot.offlinePracticeLogs, offlineLog],
+      updatedAt: new Date().toISOString(),
+    });
+    setFeedback(null);
+    setFeedbackStageId(null);
+    setAnalyzeError(reason);
   }
 
   async function handleAnalyzeStep() {
@@ -265,6 +343,16 @@ export default function TrainProcedurePage() {
 
     setAnalyzeError(null);
     setFrozenFrameUrl(capturedFrame.previewUrl);
+
+    if (equityMode.enabled && equityMode.offlinePracticeLogging && !isOnline) {
+      appendOfflinePracticeLog(
+        session,
+        capturedFrame,
+        "You are offline. This attempt was logged locally and can be revisited on the review page.",
+      );
+      return;
+    }
+
     setIsAnalyzing(true);
 
     try {
@@ -277,6 +365,15 @@ export default function TrainProcedurePage() {
         simulation_confirmation: simulationConfirmed,
         session_id: session.id,
         student_name: authUser.name,
+        feedback_language: equityMode.feedbackLanguage,
+        equity_mode: toApiEquityMode({
+          ...equityMode,
+          audioCoaching: equityMode.enabled && equityMode.audioCoaching,
+          lowBandwidthMode: equityMode.enabled && equityMode.lowBandwidthMode,
+          cheapPhoneMode: equityMode.enabled && equityMode.cheapPhoneMode,
+          offlinePracticeLogging:
+            equityMode.enabled && equityMode.offlinePracticeLogging,
+        }),
       });
 
       const attempt =
@@ -304,6 +401,7 @@ export default function TrainProcedurePage() {
         ...session,
         skillLevel,
         calibration,
+        equityMode,
         debrief: undefined,
         events: [...session.events, event],
         updatedAt: new Date().toISOString(),
@@ -312,6 +410,20 @@ export default function TrainProcedurePage() {
       setFeedback(response);
       setFeedbackStageId(currentStage.id);
     } catch (error) {
+      if (
+        equityMode.enabled &&
+        equityMode.offlinePracticeLogging &&
+        typeof window !== "undefined" &&
+        !window.navigator.onLine
+      ) {
+        appendOfflinePracticeLog(
+          session,
+          capturedFrame,
+          "The network dropped during analysis. This attempt was saved locally for offline practice tracking.",
+        );
+        return;
+      }
+
       setAnalyzeError(
         error instanceof Error ? error.message : "The AI analysis request failed.",
       );
@@ -395,6 +507,7 @@ export default function TrainProcedurePage() {
           </div>
           <div className="button-row">
             <span className="pill">Simulation-only</span>
+            <span className="pill">{isOnline ? "Online" : "Offline"}</span>
             <span className="pill">
               {authUser.name} · {authUser.role}
             </span>
@@ -469,8 +582,14 @@ export default function TrainProcedurePage() {
               <div className="camera-stage">
                 <div className="camera-surface">
                   <CameraFeed
+                    cheapPhoneMode={
+                      equityMode.enabled && equityMode.cheapPhoneMode
+                    }
                     ref={cameraRef}
                     frozenFrameUrl={isAnalyzing ? frozenFrameUrl : null}
+                    lowBandwidthMode={
+                      equityMode.enabled && equityMode.lowBandwidthMode
+                    }
                     onReadyChange={setCameraReady}
                   />
                   <CalibrationOverlay
@@ -498,9 +617,9 @@ export default function TrainProcedurePage() {
                 <div>
                   <h2 className="panel-title">Stage controls</h2>
                   <p className="panel-copy">
-                    Phase 3 keeps the capture flow stable, the scoring deterministic, and
-                    the overlay targets aligned with the backend rubric while the configured
-                    model server handles the stage coaching.
+                    The trainer now supports an equity mode for lower-resource practice:
+                    multilingual feedback, audio coaching, smaller uploads, older phone
+                    camera constraints, and offline-first practice logging.
                   </p>
                 </div>
               </div>
@@ -523,6 +642,143 @@ export default function TrainProcedurePage() {
                   <select value={procedure.practice_surface} disabled>
                     <option>{procedure.practice_surface}</option>
                   </select>
+                </label>
+              </div>
+
+              <label className="safety-confirm-card" style={{ marginTop: 18 }}>
+                <input
+                  checked={equityMode.enabled}
+                  onChange={(event) =>
+                    handleEquityModeChange({
+                      ...equityMode,
+                      enabled: event.target.checked,
+                    })
+                  }
+                  type="checkbox"
+                />
+                <div>
+                  <strong>Equity mode</strong>
+                  <p className="panel-copy">
+                    Turn on access-focused settings for multilingual, lower-bandwidth,
+                    low-cost-device practice outside the lab.
+                  </p>
+                </div>
+              </label>
+
+              <div className="inline-form-row" style={{ marginTop: 18 }}>
+                <label className="field-label">
+                  Feedback language
+                  <select
+                    disabled={!equityMode.enabled}
+                    onChange={(event) =>
+                      handleEquityModeChange({
+                        ...equityMode,
+                        feedbackLanguage: event.target.value as EquityModeSettings["feedbackLanguage"],
+                      })
+                    }
+                    value={equityMode.feedbackLanguage}
+                  >
+                    {FEEDBACK_LANGUAGE_OPTIONS.map((option) => (
+                      <option key={option.value} value={option.value}>
+                        {option.label}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+                <article className="metric-card compact-metric-card">
+                  <p className="metric-label">Access Profile</p>
+                  <p className="metric-value">
+                    {equityMode.enabled
+                      ? getFeedbackLanguageLabel(equityMode.feedbackLanguage)
+                      : "Standard"}
+                  </p>
+                  <p className="panel-copy" style={{ marginTop: 10 }}>
+                    {equityMode.enabled
+                      ? "Plain-language coaching tuned for lower-resource practice contexts."
+                      : "Default camera, bandwidth, and review settings."}
+                  </p>
+                </article>
+              </div>
+
+              <div className="equity-toggle-grid" style={{ marginTop: 18 }}>
+                <label className="safety-confirm-card">
+                  <input
+                    checked={equityMode.audioCoaching}
+                    disabled={!equityMode.enabled}
+                    onChange={(event) =>
+                      handleEquityModeChange({
+                        ...equityMode,
+                        audioCoaching: event.target.checked,
+                      })
+                    }
+                    type="checkbox"
+                  />
+                  <div>
+                    <strong>Audio coaching</strong>
+                    <p className="panel-copy">
+                      Read the coaching cue aloud on the trainer and review pages.
+                    </p>
+                  </div>
+                </label>
+
+                <label className="safety-confirm-card">
+                  <input
+                    checked={equityMode.lowBandwidthMode}
+                    disabled={!equityMode.enabled}
+                    onChange={(event) =>
+                      handleEquityModeChange({
+                        ...equityMode,
+                        lowBandwidthMode: event.target.checked,
+                      })
+                    }
+                    type="checkbox"
+                  />
+                  <div>
+                    <strong>Low-bandwidth image mode</strong>
+                    <p className="panel-copy">
+                      Shrink capture resolution and JPEG quality to reduce upload weight.
+                    </p>
+                  </div>
+                </label>
+
+                <label className="safety-confirm-card">
+                  <input
+                    checked={equityMode.cheapPhoneMode}
+                    disabled={!equityMode.enabled}
+                    onChange={(event) =>
+                      handleEquityModeChange({
+                        ...equityMode,
+                        cheapPhoneMode: event.target.checked,
+                      })
+                    }
+                    type="checkbox"
+                  />
+                  <div>
+                    <strong>Cheap-phone compatibility</strong>
+                    <p className="panel-copy">
+                      Request a lighter camera profile that is friendlier to older devices.
+                    </p>
+                  </div>
+                </label>
+
+                <label className="safety-confirm-card">
+                  <input
+                    checked={equityMode.offlinePracticeLogging}
+                    disabled={!equityMode.enabled}
+                    onChange={(event) =>
+                      handleEquityModeChange({
+                        ...equityMode,
+                        offlinePracticeLogging: event.target.checked,
+                      })
+                    }
+                    type="checkbox"
+                  />
+                  <div>
+                    <strong>Offline-first practice logging</strong>
+                    <p className="panel-copy">
+                      Save local practice attempts when the network is unavailable.
+                    </p>
+                  </div>
                 </label>
               </div>
 
@@ -578,6 +834,8 @@ export default function TrainProcedurePage() {
               <p className="fine-print" style={{ marginTop: 16 }}>
                 If four-corner calibration feels unstable, switch to the centered guide. The
                 overlay renderer, safety gate, and AI coaching flow work in both modes.
+                Equity mode settings are saved with the local session so access preferences
+                carry into review.
               </p>
             </article>
           </section>
@@ -595,7 +853,9 @@ export default function TrainProcedurePage() {
             <div style={{ marginTop: 20 }}>
               <FeedbackCard
                 attemptCount={currentStageAttempts}
+                audioEnabled={equityMode.enabled && equityMode.audioCoaching}
                 error={analyzeError}
+                feedbackLanguage={equityMode.feedbackLanguage}
                 isAnalyzing={isAnalyzing}
                 response={feedbackStageId === currentStage.id ? feedback : null}
                 stageTitle={currentStage.title}

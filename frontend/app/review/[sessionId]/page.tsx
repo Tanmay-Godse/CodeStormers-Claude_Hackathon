@@ -5,6 +5,7 @@ import { useParams, useRouter } from "next/navigation";
 import { useEffect, useState } from "react";
 
 import { ReviewSummary } from "@/components/ReviewSummary";
+import { toApiEquityMode } from "@/lib/equity";
 import { generateDebrief, getProcedure, listReviewCases } from "@/lib/api";
 import {
   buildSessionReviewSignature,
@@ -30,6 +31,8 @@ function buildDebriefPayload(session: SessionRecord): DebriefRequest {
     session_id: session.id,
     procedure_id: session.procedureId,
     skill_level: session.skillLevel,
+    feedback_language: session.equityMode.feedbackLanguage,
+    equity_mode: toApiEquityMode(session.equityMode),
     events: session.events.map((event) => ({
       stage_id: event.stageId,
       attempt: event.attempt,
@@ -81,6 +84,24 @@ export default function ReviewPage() {
   const [debriefError, setDebriefError] = useState<string | null>(null);
   const [isDebriefLoading, setIsDebriefLoading] = useState(false);
   const [isSessionLoading, setIsSessionLoading] = useState(true);
+  const [isOnline, setIsOnline] = useState(true);
+
+  useEffect(() => {
+    if (typeof window === "undefined") {
+      return;
+    }
+
+    const syncOnlineStatus = () => setIsOnline(window.navigator.onLine);
+    syncOnlineStatus();
+
+    window.addEventListener("online", syncOnlineStatus);
+    window.addEventListener("offline", syncOnlineStatus);
+
+    return () => {
+      window.removeEventListener("online", syncOnlineStatus);
+      window.removeEventListener("offline", syncOnlineStatus);
+    };
+  }, []);
 
   useEffect(() => {
     const nextUser = getAuthUser();
@@ -173,6 +194,19 @@ export default function ReviewPage() {
       return;
     }
 
+    if (
+      !isOnline &&
+      sessionSnapshot.equityMode.enabled &&
+      sessionSnapshot.equityMode.offlinePracticeLogging
+    ) {
+      setDebrief(null);
+      setDebriefError(
+        "Offline mode is active. Your practice history is still saved locally, and the AI debrief will retry once the device reconnects.",
+      );
+      setIsDebriefLoading(false);
+      return;
+    }
+
     let cancelled = false;
 
     async function hydrateDebrief() {
@@ -216,7 +250,7 @@ export default function ReviewPage() {
     return () => {
       cancelled = true;
     };
-  }, [session]);
+  }, [isOnline, session]);
 
   useEffect(() => {
     if (!session) {
@@ -301,6 +335,7 @@ export default function ReviewPage() {
           </div>
           <div className="button-row">
             <span className="pill">Phase 3 session review</span>
+            <span className="pill">{isOnline ? "Online" : "Offline"}</span>
             <span className="pill">
               {authUser.name} · {authUser.role}
             </span>
@@ -336,6 +371,7 @@ export default function ReviewPage() {
           debrief={debrief}
           debriefError={debriefError}
           isDebriefLoading={isDebriefLoading}
+          isOnline={isOnline}
           procedure={procedure}
           reviewCases={reviewCases}
           session={session}

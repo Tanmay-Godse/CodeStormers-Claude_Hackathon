@@ -340,7 +340,7 @@ img {
 }
 
 .signal-grid {
-  grid-template-columns: repeat(3, minmax(0, 1fr));
+  grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
 }
 
 .signal-card {
@@ -448,6 +448,10 @@ img {
   grid-template-columns: repeat(3, minmax(0, 1fr));
 }
 
+.feature-grid-four {
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+}
+
 .feature-card {
   min-height: 240px;
 }
@@ -477,6 +481,21 @@ img {
   margin-top: 20px;
 }
 
+.path-chip {
+  display: inline-flex;
+  width: fit-content;
+  max-width: 100%;
+  padding: 10px 12px;
+  border-radius: 14px;
+  border: 1px solid rgba(97, 61, 37, 0.12);
+  background: rgba(255, 251, 246, 0.78);
+  color: var(--ink);
+  font-family: "IBM Plex Mono", monospace;
+  font-size: 0.8rem;
+  line-height: 1.5;
+  word-break: break-word;
+}
+
 .trainer-intro-strip {
   display: grid;
   grid-template-columns: minmax(0, 1.1fr) minmax(280px, 0.9fr);
@@ -493,6 +512,10 @@ img {
 
 .metric-card {
   padding-top: 18px;
+}
+
+.compact-metric-card {
+  min-height: 100%;
 }
 
 .metric-label {
@@ -780,6 +803,12 @@ img {
   font-family: var(--font-display), sans-serif;
 }
 
+.equity-toggle-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 16px;
+}
+
 .overlay-label {
   font-family: var(--font-display), sans-serif;
   font-size: 0.76rem;
@@ -951,11 +980,13 @@ img {
   }
 
   .feature-grid,
+  .feature-grid-four,
   .landing-bottom-grid,
   .summary-grid,
   .inline-form-row,
   .signal-grid,
-  .stat-rail {
+  .stat-rail,
+  .equity-toggle-grid {
     grid-template-columns: 1fr;
   }
 

@@ -1,0 +1,6 @@
+sample_id,module_id,stage_id,image_condition,simulation_surface,faculty_label,requires_human_review,notes
+demo-001,simple-interrupted-suture,setup,clear,orange,clear_pass,false,Surface and tools clearly visible
+demo-002,simple-interrupted-suture,needle_entry,clear,foam-pad,clear_retry,false,Angle too shallow at entry
+demo-003,simple-interrupted-suture,needle_exit,blurry,banana,unclear_frame,true,Exit point not reviewable
+demo-004,simple-interrupted-suture,knot_tie,clear,bench-model,unsafe_technique,true,Knot tension appears excessive
+demo-005,simple-interrupted-suture,setup,clinical-scene,unknown,blocked_real_patient_risk,true,Should be blocked by simulation-only safety gate
