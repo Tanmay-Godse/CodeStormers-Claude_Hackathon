@@ -12,7 +12,7 @@ AI Clinical Skills Coach is a simulation-only trainer for practicing a simple in
 - Human-in-the-loop validation queue for flagged sessions
 - Hard simulation-only safety gate before analysis
 - Student and admin login entry points
-- Equity mode with multilingual feedback selection, audio coaching, low-bandwidth capture, cheap-phone compatibility, and offline-first practice logging
+- Equity mode with multilingual feedback selection, audio coaching, low-bandwidth capture, Low Compute device compatibility, and offline-first practice logging
 - Open learning-library assets for rubrics and benchmark starters
 - Safer-skills roadmap for broader, lower-risk module expansion
 - Auto-detected support for OpenAI-compatible and Anthropic-style AI endpoints
