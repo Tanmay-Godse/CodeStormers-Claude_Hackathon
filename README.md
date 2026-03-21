@@ -81,6 +81,12 @@ Example local OpenAI-compatible server:
 vllm serve chaitnya26/Qwen2.5-Omni-3B-Fork --port 8000 --api-key EMPTY
 ```
 
+Quick model check:
+
+```bash
+curl -H 'Authorization: Bearer EMPTY' http://localhost:8000/v1/models
+```
+
 ### 2. Start the backend
 
 ```bash
@@ -103,6 +109,8 @@ npm install
 cp .env.local.example .env.local
 npm run dev
 ```
+
+In this repo, `npm run dev` uses a Webpack-backed Next.js dev server for local stability.
 
 ### 4. Open the app
 

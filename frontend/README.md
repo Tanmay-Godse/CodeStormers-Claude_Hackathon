@@ -23,6 +23,8 @@ cp .env.local.example .env.local
 npm run dev
 ```
 
+`npm run dev` uses a Webpack-backed Next.js dev server in this workspace because it has been more stable locally than Turbopack during iterative development.
+
 ## Useful Commands
 
 ```bash
@@ -94,6 +96,16 @@ Check that `NEXT_PUBLIC_API_BASE_URL` points at a running backend and that `/api
 ### Review text looks stale
 
 The cached debrief is invalidated automatically when the session event history changes. If you want to reset everything, start a fresh session from the trainer UI.
+
+### Frontend dev mode throws bundler or manifest errors
+
+This repo already defaults `npm run dev` to `next dev --webpack`.
+
+If the dev server still gets into a bad state, stop it and start it again:
+
+```bash
+npm run dev
+```
 
 ### I want to test offline-first practice logging
 

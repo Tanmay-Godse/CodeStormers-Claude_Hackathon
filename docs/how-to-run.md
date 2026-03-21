@@ -27,6 +27,12 @@ Install these tools first:
 
 If you prefer `micromamba` for the backend, you can use it instead of `venv`. The app works fine with separate environments for vLLM and FastAPI.
 
+To verify the local model server manually, include the same bearer key the backend uses:
+
+```bash
+curl -H 'Authorization: Bearer EMPTY' http://localhost:8000/v1/models
+```
+
 ## Windows
 
 These commands use PowerShell.
@@ -65,6 +71,8 @@ Copy-Item .env.local.example .env.local
 npm run dev
 ```
 
+`npm run dev` is already configured to use a Webpack-backed Next.js dev server in this workspace.
+
 The frontend env should point to the backend:
 
 ```env
@@ -82,6 +90,7 @@ http://localhost:3000
 ### Quick verification
 
 ```powershell
+curl.exe -H "Authorization: Bearer EMPTY" http://localhost:8000/v1/models
 curl.exe http://localhost:8001/api/v1/health
 curl.exe http://localhost:8001/api/v1/procedures/simple-interrupted-suture
 ```
@@ -116,6 +125,8 @@ cp .env.local.example .env.local
 npm run dev
 ```
 
+`npm run dev` is already configured to use a Webpack-backed Next.js dev server in this workspace.
+
 ### Open the app
 
 Visit:
@@ -127,6 +138,7 @@ http://localhost:3000
 ### Quick verification
 
 ```bash
+curl -H 'Authorization: Bearer EMPTY' http://localhost:8000/v1/models
 curl http://localhost:8001/api/v1/health
 curl http://localhost:8001/api/v1/procedures/simple-interrupted-suture
 ```
@@ -161,6 +173,8 @@ cp .env.local.example .env.local
 npm run dev
 ```
 
+`npm run dev` is already configured to use a Webpack-backed Next.js dev server in this workspace.
+
 ### Open the app
 
 Visit:
@@ -172,6 +186,7 @@ http://localhost:3000
 ### Quick verification
 
 ```bash
+curl -H 'Authorization: Bearer EMPTY' http://localhost:8000/v1/models
 curl http://localhost:8001/api/v1/health
 curl http://localhost:8001/api/v1/procedures/simple-interrupted-suture
 ```

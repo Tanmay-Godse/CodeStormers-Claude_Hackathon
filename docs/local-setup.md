@@ -52,6 +52,12 @@ Example server:
 vllm serve chaitnya26/Qwen2.5-Omni-3B-Fork --port 8000 --api-key EMPTY
 ```
 
+Quick model check:
+
+```bash
+curl -H 'Authorization: Bearer EMPTY' http://localhost:8000/v1/models
+```
+
 Good model choices:
 
 - `chaitnya26/Qwen2.5-Omni-3B-Fork`: good single-model option for both analysis and debrief
@@ -180,6 +186,8 @@ cp .env.local.example .env.local
 npm run dev
 ```
 
+In this repo, `npm run dev` uses a Webpack-backed Next.js dev server for local stability.
+
 Default frontend environment:
 
 ```env
@@ -236,6 +244,14 @@ Expected result:
 curl http://localhost:8001/api/v1/procedures/simple-interrupted-suture
 ```
 
+### Model Server Check
+
+```bash
+curl -H 'Authorization: Bearer EMPTY' http://localhost:8000/v1/models
+```
+
+If you started vLLM with `--api-key EMPTY`, requests without the `Authorization` header will return `Unauthorized`.
+
 This should return:
 
 - the procedure id and title
@@ -285,6 +301,7 @@ This route always returns a structured debrief shape:
 - with empty `events`, it returns a simple default study summary
 - with non-empty `events`, it prefers model-backed output
 - it now also returns `equity_support_plan`, `audio_script`, `feedback_language`, a cross-session `error_fingerprint`, and one `adaptive_drill`
+- on smaller local models, non-empty AI-backed debriefs can take noticeably longer than the empty-event fallback response
 
 ## 9. Trainer Walkthrough
 
@@ -375,6 +392,27 @@ If you are using a custom Anthropic-compatible proxy, try setting:
 
 ```env
 AI_PROVIDER=anthropic
+```
+
+### vLLM returns `Unauthorized`
+
+If you started the model server with `--api-key EMPTY`, verify it with:
+
+```bash
+curl -H 'Authorization: Bearer EMPTY' http://localhost:8000/v1/models
+```
+
+The backend already sends this header automatically through `AI_API_KEY=EMPTY`.
+
+### Frontend dev mode shows bundler or manifest errors
+
+This workspace uses `npm run dev` -> `next dev --webpack` for local stability.
+
+If the frontend still looks stuck, stop the dev server and start it again:
+
+```bash
+cd frontend
+npm run dev
 ```
 
 ### The review page shows local history but fallback debrief text
