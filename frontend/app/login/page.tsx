@@ -289,7 +289,7 @@ function LoginPageContent() {
                 <div className="feedback-block">
                   <div className="feedback-header">
                     <strong>Judge demo accounts</strong>
-                    <span className="pill">Password: Codestormers</span>
+                    <span className="pill">Password: CODESTORMERS</span>
                   </div>
                   <div className="dashboard-progress-list" style={{ marginTop: 16 }}>
                     {JUDGE_DEMO_ACCOUNTS.map((account) => (

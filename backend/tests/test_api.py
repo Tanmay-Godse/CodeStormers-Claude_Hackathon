@@ -52,7 +52,7 @@ def test_demo_student_account_preview_and_sign_in(tmp_path, monkeypatch) -> None
         "/api/v1/auth/sign-in",
         json={
             "identifier": "Student_1@gmail.com",
-            "password": "Codestormers",
+            "password": "CODESTORMERS",
             "role": "student",
         },
     )
@@ -139,7 +139,7 @@ def test_live_session_limit_can_be_consumed_and_reset_by_admin(tmp_path, monkeyp
         "/api/v1/auth/sign-in",
         json={
             "identifier": "student_1@gmail.com",
-            "password": "Codestormers",
+            "password": "CODESTORMERS",
             "role": "student",
         },
     )

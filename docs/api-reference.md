@@ -1,409 +1,198 @@
 # API Reference
 
-The backend exposes a small API under:
+Base URL in local development:
 
 ```text
 http://localhost:8001/api/v1
 ```
 
-The frontend only talks to this backend. Browser clients do not call Anthropic or OpenAI APIs directly.
+The browser only talks to this backend. It does not call Anthropic or OpenAI
+directly.
 
 ## Conventions
 
-- all request and response bodies are JSON
-- request validation is handled by Pydantic
-- backend scoring is deterministic
-- analyze errors are surfaced as HTTP errors
-- debrief responses are normalized into a stable study-summary structure with equity support and audio text
+- request and response bodies are JSON unless noted otherwise
+- auth uses username-only lookup in the public demo
+- seeded demo accounts return quota fields such as `live_session_limit` and `live_session_remaining`
+- the frontend currently sends fixed defaults for simulation confirmation, audio coaching, and offline logging
 
-## `GET /health`
+## Health And Procedure
 
-Returns a simple service health payload.
+### `GET /health`
 
-### Example
-
-```bash
-curl http://localhost:8001/api/v1/health
-```
-
-### Response
+Returns:
 
 ```json
 {"status":"ok","simulation_only":true}
 ```
 
-## `GET /procedures/{id}`
+### `GET /procedures/{id}`
 
-Returns the procedure definition used by the trainer UI.
-
-### Supported procedure ids
+Supported right now:
 
 - `simple-interrupted-suture`
 
-### Example
+Returns the procedure metadata that drives the trainer and library.
+
+## Auth
+
+### `GET /auth/accounts/preview`
+
+Looks up a seeded demo account by username.
+
+Query params:
+
+- `identifier`
+
+Example:
 
 ```bash
-curl http://localhost:8001/api/v1/procedures/simple-interrupted-suture
+curl "http://localhost:8001/api/v1/auth/accounts/preview?identifier=Student_1@gmail.com"
 ```
 
-### Response shape
+Response fields include:
+
+- `id`
+- `name`
+- `username`
+- `role`
+- `is_developer`
+- `is_seeded`
+- `live_session_limit`
+- `live_session_used`
+- `live_session_remaining`
+- `session_token` which is `null` before sign-in
+
+Current demo behavior:
+
+- unknown usernames return `404`
+- the frontend redirects those users to `/access-required`
+
+### `POST /auth/sign-in`
+
+Signs in a seeded or private managed account.
+
+Example request:
 
 ```json
 {
-  "id": "simple-interrupted-suture",
-  "title": "Simple Interrupted Suture",
-  "simulation_only": true,
-  "practice_surface": "Orange, banana, or foam pad",
-  "named_overlay_targets": [],
-  "stages": []
-}
-```
-
-### Important fields
-
-- `named_overlay_targets`: overlay ids with labels, descriptions, normalized coordinates, and colors
-- `stages`: stage ids, objectives, visible checks, common errors, overlay target ids, and score weights
-
-### Error behavior
-
-- `404` if the procedure id is unknown
-
-## `GET /auth/accounts/preview`
-
-Looks up an existing workspace account by username or display name.
-
-### Query parameters
-
-- `identifier`: username or display name to check
-
-### Example
-
-```bash
-curl "http://localhost:8001/api/v1/auth/accounts/preview?identifier=student01"
-```
-
-### Successful response
-
-```json
-{
-  "id": "account-demo",
-  "name": "Student One",
-  "username": "student01",
-  "role": "student",
-  "is_developer": false,
-  "requested_role": null,
-  "admin_approval_status": "none",
-  "created_at": "2026-03-21T18:45:00.000000+00:00"
-}
-```
-
-### Error behavior
-
-- `404` if no account matches the identifier
-- `409` if more than one account shares the same display name and the username was not used
-
-## `POST /auth/accounts`
-
-Creates a new workspace account and persists it in the backend SQLite database.
-
-### Request body
-
-```json
-{
-  "name": "Student One",
-  "username": "student01",
-  "password": "supersecure",
+  "identifier": "Student_1@gmail.com",
+  "password": "CODESTORMERS",
   "role": "student"
 }
 ```
 
-### Error behavior
+Success returns the same account preview shape plus a non-null `session_token`.
 
-- `201` on success
-- `400` for invalid usernames or short passwords
-- `409` if the username is already registered
+### `POST /auth/accounts`
 
-### Current role behavior
+Still exists, but public self-service account creation is disabled in this demo.
 
-- choosing `"student"` creates a normal learner account
-- choosing `"admin"` creates a learner account with:
-  - `"role": "student"`
-  - `"requested_role": "admin"`
-  - `"admin_approval_status": "pending"`
-- the reserved developer email `developer@gmail.com` cannot be created from the UI
+Current behavior:
 
-## `POST /auth/sign-in`
+- returns `403`
+- message tells the user to contact developers for a fixed demo email
 
-Signs in an existing workspace account by identifier and password.
+### `PUT /auth/accounts/{account_id}`
 
-### Request body
+Profile update route for non-seeded private accounts only.
 
-```json
-{
-  "identifier": "student01",
-  "password": "supersecure",
-  "role": "student"
-}
-```
+In the public demo:
 
-### Error behavior
+- seeded student accounts are read-only
+- private internal admin and developer accounts are managed out of band
 
-- `200` on success
-- `401` for invalid credentials
-- `404` if the account does not exist
-- `409` if the requested role does not match the stored account role
+### `GET /auth/demo-accounts`
 
-### Current role notes
+Lists seeded non-developer demo accounts for quota management.
 
-- the fixed developer account signs in through the same endpoint
-- a pending admin-request account will receive `409` if it tries to sign in as `"admin"` before approval
-- a rejected admin-request account can still sign in as `"student"`
+Query params:
 
-## `PUT /auth/accounts/{account_id}`
+- `actor_account_id`
+- `actor_session_token`
 
-Updates a persisted workspace account.
+Access:
 
-### Request body
+- admin or developer only
+
+### `POST /auth/live-sessions/consume`
+
+Consumes one live session when a camera run starts.
+
+Request:
 
 ```json
 {
-  "name": "Student One Updated",
-  "username": "student01",
-  "current_password": "supersecure",
-  "new_password": "evenmoresecure"
+  "account_id": "account-demo-student-1",
+  "session_token": "..."
 }
 ```
 
-### Notes
+Returns the refreshed account preview with updated `live_session_used` and
+`live_session_remaining`.
 
-- `current_password` is always required
-- `new_password` is optional
-- on success, the frontend updates the saved local auth user and migrates local session ownership to the new username
+### `POST /auth/accounts/{account_id}/reset-live-sessions`
 
-### Error behavior
+Resets a seeded demo account back to its full live-session allowance.
 
-- `200` on success
-- `400` for invalid input or incorrect current password
-- `404` if the account id does not exist
-- `409` if the new username is already registered
-- `403` if the fixed developer account is edited through this route
-
-## `GET /auth/admin-requests`
-
-Returns pending admin reviewer requests for the fixed developer account.
-
-### Query parameters
-
-- `developer_account_id`: the signed-in developer account id
-
-### Notes
-
-- only the fixed developer account can use this route
-- returns the same account-preview shape shown above
-
-## `POST /auth/admin-requests/{account_id}/approve`
-
-Approves a pending admin request and promotes that account to `role="admin"`.
-
-### Request body
+Request:
 
 ```json
 {
-  "developer_account_id": "account-developer-team"
+  "actor_account_id": "account-admin-or-developer",
+  "actor_session_token": "..."
 }
 ```
 
-### Status codes
+Access:
 
-- `200` on success
-- `403` if the caller is not the fixed developer account
-- `404` if the target account does not exist
+- admin or developer only
 
-## `POST /auth/admin-requests/{account_id}/reject`
+### `GET /auth/admin-requests`
+### `POST /auth/admin-requests/{account_id}/approve`
+### `POST /auth/admin-requests/{account_id}/reject`
 
-Rejects a pending admin request and keeps that account in the student role.
+These routes are developer-only approval controls. They are mainly for the
+internal approval workflow, not for judge-facing demo use.
 
-### Request body
+## Knowledge
 
-```json
-{
-  "developer_account_id": "account-developer-team"
-}
-```
+### `POST /knowledge-pack`
 
-### Status codes
+Builds the Knowledge Lab pack for rapidfire, quiz, and flashcards.
 
-- `200` on success
-- `403` if the caller is not the fixed developer account
-- `404` if the target account does not exist
-
-## `POST /knowledge-pack`
-
-Builds the `Knowledge Lab` study pack used by `/knowledge`.
-
-### Request body
+Example request:
 
 ```json
 {
   "procedure_id": "simple-interrupted-suture",
   "skill_level": "beginner",
   "feedback_language": "en",
-  "learner_name": "Student One",
-  "focus_area": "needle entry consistency",
-  "recent_issue_labels": ["angle too shallow"]
+  "learner_name": "Student 1",
+  "study_mode": "related_topics",
+  "selected_topic": "Needle angle",
+  "recent_issue_labels": ["angle_shallow"]
 }
 ```
 
-### Successful response shape
+Important fields:
 
-```json
-{
-  "title": "Simple Interrupted Suture knowledge lab",
-  "summary": "Review the live rubric in a fast, game-style format before going back into the trainer.",
-  "recommended_focus": "needle entry consistency",
-  "celebration_line": "Nice work. Keep the next round focused on one visible correction at a time.",
-  "rapidfire_rounds": [],
-  "quiz_questions": [],
-  "flashcards": []
-}
-```
+- `study_mode`: `current_procedure`, `related_topics`, or `common_mistakes`
+- `selected_topic`: optional user-chosen topic
+- `topic_suggestions`: suggestion chips for the next round
+- `rapidfire_rounds`
+- `quiz_questions`
+- `flashcards`
 
-### Notes
+If the learning model fails, the backend returns a rubric-based fallback pack.
 
-- the current demo config uses the cheaper learning-model path
-- if the model call fails, the backend returns a rubric-based fallback pack
-- the verified local smoke run returned `5` rapidfire rounds, `5` quiz questions, and `6` flashcards
+## Live Trainer
 
-## `POST /analyze-frame`
+### `POST /analyze-frame`
 
-Submits one captured trainer frame for stage analysis.
+Submits one captured frame for grading and coaching.
 
-The backend:
-
-- validates the request
-- applies a simulation-only safety gate before coaching
-- loads the procedure rubric and current stage
-- sends the request to the configured AI backend
-- prompts the configured model
-- validates the returned JSON
-- filters overlay targets against the current stage
-- computes `score_delta` in Python
-- withholds hard scores when confidence is too low or the frame is too ambiguous
-- escalates flagged sessions into the human review queue
-
-### Request body
-
-```json
-{
-  "procedure_id": "simple-interrupted-suture",
-  "stage_id": "needle_entry",
-  "skill_level": "beginner",
-  "practice_surface": "Orange, banana, or foam pad",
-  "image_base64": "ZmFrZQ==",
-  "student_question": "optional question",
-  "simulation_confirmation": true,
-  "session_id": "session-123",
-  "student_name": "Student User",
-  "feedback_language": "en",
-  "equity_mode": {
-    "enabled": true,
-    "audio_coaching": true,
-    "low_bandwidth_mode": true,
-    "cheap_phone_mode": false,
-    "offline_practice_logging": true
-  }
-}
-```
-
-### Request fields
-
-- `procedure_id`: currently `simple-interrupted-suture`
-- `stage_id`: one of the defined procedure stage ids
-- `skill_level`: `beginner` or `intermediate`
-- `practice_surface`: optional learner-selected surface label passed into safety, analysis, and coaching context
-- `image_base64`: raw base64 image bytes, without a data URL prefix
-- `student_question`: optional free-text prompt from the learner
-- `simulation_confirmation`: required simulation-only acknowledgement before analysis
-- `session_id`: optional session id used to attach human-review cases
-- `student_name`: optional learner name for the review queue
-- `student_username`: optional learner username for the review queue
-- `feedback_language`: requested learner-facing language, currently `en`, `es`, `fr`, or `hi`
-- `equity_mode`: optional access-profile settings that guide response style and lower-resource behavior
-
-### Successful response
-
-```json
-{
-  "analysis_mode": "coaching",
-  "step_status": "retry",
-  "grading_decision": "not_graded",
-  "grading_reason": "Not graded - retake required because the confidence was too low for a trustworthy score.",
-  "confidence": 0.83,
-  "visible_observations": [
-    "entry zone is visible",
-    "instrument is close to the target point",
-    "needle angle appears too shallow for a clean bite"
-  ],
-  "issues": [
-    {
-      "code": "angle_shallow",
-      "severity": "medium",
-      "message": "Approach is too shallow for a confident needle entry."
-    }
-  ],
-  "coaching_message": "Rotate the driver slightly upward and start the bite more perpendicular to the surface.",
-  "next_action": "Reposition the grip, retake the frame, and try the entry again.",
-  "overlay_target_ids": ["entry_point", "needle_angle"],
-  "score_delta": 0,
-  "safety_gate": {
-    "status": "cleared",
-    "confidence": 0.98,
-    "reason": "The image cleared the simulation-only safety screen.",
-    "refusal_message": null
-  },
-  "requires_human_review": false,
-  "human_review_reason": null,
-  "review_case_id": null
-}
-```
-
-### Response fields
-
-- `analysis_mode`: `coaching` or `blocked`
-- `step_status`: `pass`, `retry`, `unclear`, or `unsafe`
-- `grading_decision`: `graded` or `not_graded`
-- `grading_reason`: explanation when the backend refuses to attach a trustworthy score
-- `confidence`: number from `0` to `1`
-- `visible_observations`: normalized list of visible cues the model could judge
-- `issues`: up to three structured issues
-- `coaching_message`: short coaching summary
-- `next_action`: concrete next step for the learner
-- `overlay_target_ids`: allowed overlay ids for the current stage only
-- `score_delta`: deterministic integer computed by the backend; this is `0` when the attempt is not graded
-- `safety_gate`: result of the simulation-only validation layer
-- `requires_human_review`: whether the session was queued for faculty review
-- `human_review_reason`: why the case was flagged
-- `review_case_id`: queue id when a human review case was created
-
-### Status codes
-
-- `200`: successful analyzed response
-- `404`: unknown procedure or stage
-- `503`: AI analysis is not configured, usually because `AI_API_BASE_URL` is missing
-- `502`: upstream AI request failed or returned invalid JSON
-
-### Notes
-
-- a vision-capable model is required for this route
-- if the safety gate blocks the image, the response still returns `200` with `analysis_mode="blocked"`
-- the current demo configuration uses `claude-sonnet-4-6` for this route
-- text-only models are not suitable because image input is required
-
-## `POST /coach-chat`
-
-Generates the next conversational coaching turn for the live session.
-
-### Request body
+Typical request:
 
 ```json
 {
@@ -411,256 +200,130 @@ Generates the next conversational coaching turn for the live session.
   "stage_id": "needle_entry",
   "skill_level": "beginner",
   "practice_surface": "Foam pad",
-  "feedback_language": "en",
+  "image_base64": "ZmFrZQ==",
+  "student_question": "What should I fix next?",
   "simulation_confirmation": true,
-  "student_name": "Student One",
   "session_id": "session-123",
+  "student_name": "Student 1",
+  "student_username": "student_1@gmail.com",
+  "feedback_language": "en",
   "equity_mode": {
-    "enabled": false,
+    "enabled": true,
     "audio_coaching": true,
     "low_bandwidth_mode": false,
     "cheap_phone_mode": false,
     "offline_practice_logging": true
-  },
-  "messages": [
-    {
-      "role": "user",
-      "content": "Help me keep the entry angle steady."
-    }
-  ]
+  }
 }
 ```
 
-### Notes
+Important response fields:
 
-- accepts either text turns or learner audio that is transcribed first
-- can include the current frame when `simulation_confirmation=true`
-- returns `conversation_stage`, spoken `coach_message`, `plan_summary`, `suggested_next_step`, and optional `learner_goal_summary`
+- `analysis_mode`
+- `step_status`
+- `grading_decision`
+- `grading_reason`
+- `confidence`
+- `visible_observations`
+- `issues`
+- `coaching_message`
+- `next_action`
+- `overlay_target_ids`
+- `score_delta`
+- `requires_human_review`
+- `review_case_id`
 
-## `POST /tts`
+Notes:
 
-Builds the coach speech audio returned to the frontend.
+- a blocked safety-gate result still returns `200` with `analysis_mode="blocked"`
+- the setup stage is intentionally more forgiving for visible demo surfaces
+- the current frontend keeps `simulation_confirmation=true`
 
-### Request body
+### `POST /coach-chat`
+
+Generates the next live coaching turn.
+
+The request can carry:
+
+- `messages`
+- `image_base64`
+- `audio_base64`
+- `audio_format`
+- current stage, surface, and learner context
+
+The response includes:
+
+- `conversation_stage`
+- `coach_message`
+- `plan_summary`
+- `suggested_next_step`
+- `camera_observations`
+- `stage_focus`
+- `learner_goal_summary`
+- `learner_transcript`
+
+### `POST /tts`
+
+Generates coach speech audio.
+
+Example:
 
 ```json
 {
-  "text": "Smoke test voice output.",
+  "text": "Keep the needle entry slightly more upright.",
   "feedback_language": "en",
   "coach_voice": "guide_female"
 }
 ```
 
-### Response
+Returns audio bytes with the active content type, usually `audio/mpeg` when
+neural TTS succeeds.
 
-- returns the generated audio content type from the active TTS engine
-- current local behavior is usually `audio/mpeg` when neural `edge-tts` succeeds, with `audio/wav` as fallback
+## Review
 
-## `GET /review-cases`
+### `GET /review-cases`
 
-Returns the human validation queue.
+Lists flagged review tickets.
 
-### Query params
+Useful query params:
 
-- `status`: optional `pending` or `resolved`
-- `session_id`: optional session filter
+- `status`
+- `session_id`
 
-### Response notes
+Each case can include:
 
-- each case includes `source`, `analysis_blocked`, `safety_gate`, and the initial AI assessment
-- resolved cases may also include `corrected_step_status`, `corrected_coaching_message`, `reviewer_notes`, and `rubric_feedback`
+- learner name and username
+- initial AI assessment
+- safety-gate result
+- blocked or escalated reason
+- reviewer resolution fields when resolved
 
-## `POST /review-cases/{case_id}/resolve`
+### `POST /review-cases/{case_id}/resolve`
 
-Resolves a flagged session with human feedback.
+Resolves a flagged case with reviewer notes and optional corrected coaching.
 
-### Request body
-
-```json
-{
-  "reviewer_name": "Faculty Reviewer",
-  "reviewer_notes": "The AI was directionally correct but too uncertain.",
-  "corrected_step_status": "retry",
-  "corrected_coaching_message": "Slow the entry and reframe the angle before retrying.",
-  "rubric_feedback": "Add a stronger low-confidence escalation rule for shallow entries."
-}
-```
-
-### Status codes
-
-- `200`: case resolved successfully
-- `404`: review case id not found
-
-## `POST /debrief`
+### `POST /debrief`
 
 Generates the review-page debrief from stored session history.
 
-### Request body
+Typical request includes:
 
-```json
-{
-  "session_id": "demo-session",
-  "procedure_id": "simple-interrupted-suture",
-  "skill_level": "beginner",
-  "feedback_language": "en",
-  "equity_mode": {
-    "enabled": true,
-    "audio_coaching": true,
-    "low_bandwidth_mode": true,
-    "cheap_phone_mode": false,
-    "offline_practice_logging": true
-  },
-  "events": [
-    {
-      "stage_id": "needle_entry",
-      "attempt": 1,
-      "step_status": "retry",
-      "analysis_mode": "coaching",
-      "graded": true,
-      "issues": [
-        {
-          "code": "angle_shallow",
-          "severity": "medium",
-          "message": "The angle is too shallow."
-        }
-      ],
-      "score_delta": 13,
-      "coaching_message": "Rotate upward before retrying.",
-      "overlay_target_ids": ["entry_point", "needle_angle"],
-      "visible_observations": [
-        "surface is centered",
-        "entry zone is visible"
-      ],
-      "next_action": "Retry the entry stage.",
-      "confidence": 0.88,
-      "created_at": "2026-03-20T17:10:00.000Z"
-    }
-  ]
-}
-```
+- `session_id`
+- `procedure_id`
+- `skill_level`
+- `feedback_language`
+- `events`
+- optional `learner_profile`
 
-Optional request addition:
+Important response fields:
 
-- `learner_profile`: aggregated cross-session snapshot from the frontend, including `total_sessions`, `graded_attempts`, and top recurring issues for the same learner and procedure
-
-### Event field notes
-
-- `stage_id`: current stage id
-- `attempt`: 1-based attempt number for that stage
-- `step_status`: `pass`, `retry`, `unclear`, or `unsafe`
-- `analysis_mode`: `coaching` or `blocked`
-- `graded`: whether that attempt should count as a trustworthy scored signal
-- `grading_reason`: optional explanation when the attempt was not graded
-- `issues`: structured issue list from a prior analyze response
-- `score_delta`: backend-computed score delta from that attempt
-- `coaching_message`: coaching text from the prior analyze response
-- `overlay_target_ids`: overlay ids used in that attempt
-- `visible_observations`: optional normalized observations from the analyze response
-- `next_action`: optional next-step text
-- `confidence`: optional confidence value
-- `created_at`: ISO timestamp string
-
-### Successful response
-
-```json
-{
-  "feedback_language": "en",
-  "graded_attempt_count": 4,
-  "not_graded_attempt_count": 1,
-  "error_fingerprint": [
-    {
-      "code": "angle_shallow",
-      "label": "shallow entry angle",
-      "count": 3,
-      "stage_ids": ["needle_entry"]
-    }
-  ],
-  "adaptive_drill": {
-    "title": "shallow entry angle mini drill",
-    "focus": "shallow entry angle",
-    "reason": "This drill targets the correction that shows up most often across your sessions: shallow entry angle.",
-    "instructions": [
-      "Do 5 slow reps that isolate shallow entry angle instead of running a full stitch.",
-      "Pause after each rep and check whether the correction stayed visible in frame.",
-      "Finish with 1 full captured attempt and compare it with the earlier pattern."
-    ],
-    "rep_target": "Target: 5 focused reps and 1 full capture."
-  },
-  "strengths": [
-    "You kept the practice surface centered during the attempt.",
-    "Your grip remained stable enough to judge the frame.",
-    "You captured a reviewable image for coaching."
-  ],
-  "improvement_areas": [
-    "Improve the entry angle on the first bite.",
-    "Keep the needle arc consistent through the wound line.",
-    "Seat the knot more centrally during the final tie."
-  ],
-  "practice_plan": [
-    "Repeat the entry stage with a more perpendicular approach.",
-    "Practice one slow exit arc while keeping the far side visible.",
-    "Finish with one centered knot attempt and review the frame."
-  ],
-  "equity_support_plan": [
-    "Use low-bandwidth mode when the connection is weak.",
-    "Replay the audio coaching if reading is tiring.",
-    "Keep logging practice locally when the network drops."
-  ],
-  "audio_script": "Quick coaching recap. Repeat the entry stage with a more perpendicular approach.",
-  "quiz": [
-    {
-      "question": "What does a shallow entry angle usually affect?",
-      "answer": "It makes the first bite less confident and harder to control."
-    },
-    {
-      "question": "Why should the far-side exit remain visible?",
-      "answer": "Visibility helps confirm the arc completes across the practice line."
-    },
-    {
-      "question": "What does a centered final knot improve?",
-      "answer": "It improves the presentation and alignment of the finished stitch."
-    }
-  ]
-}
-```
-
-### Response guarantees
-
-- `graded_attempt_count` and `not_graded_attempt_count` are always present
-- `error_fingerprint` is always present, even when it is empty
-- `adaptive_drill.instructions` always has 3 items
-- `strengths` always has 3 items
-- `improvement_areas` always has 3 items
-- `practice_plan` always has 3 items
-- `adaptive_drill` always returns one focused micro-drill
-- `equity_support_plan` always has 3 items
-- `audio_script` is always a single read-aloud coaching paragraph
-- `quiz` always has 3 question and answer pairs
-
-### Status codes
-
-- `200`: both AI-backed and fallback debriefs
-- `404`: unknown procedure id
-
-### Notes
-
-- empty `events` are supported
-- non-empty `events` prefer model-backed output when available
-- if the AI layer fails or returns a partial payload, the backend fills missing content from deterministic fallback logic
-
-## Frontend Session Model
-
-The review page is powered by browser `localStorage`, not by backend persistence.
-
-Each local session contains:
-
-- procedure id
-- optional learner ownership metadata
-- skill level
-- calibration state
-- per-stage events
-- score deltas
-- graded vs not-graded attempt state
-- coaching messages
-- optional visible observations, confidence, and next-action data
-- an optional cached debrief keyed by session review signature
+- `graded_attempt_count`
+- `not_graded_attempt_count`
+- `error_fingerprint`
+- `adaptive_drill`
+- `strengths`
+- `improvement_areas`
+- `practice_plan`
+- `equity_support_plan`
+- `audio_script`
+- `quiz`

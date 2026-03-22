@@ -1,148 +1,111 @@
 # Team Setup
 
-This guide is the teammate-focused version of setup for an open repository.
+This guide is for collaborators working on a public repo while the demo is live.
 
-Use it when:
+## What Is Public vs Private
 
-- multiple collaborators need to run the app
-- the repo is public or will be pushed to a public remote
-- you want a clean rule for API keys, SQLite account data, and browser-local session data
+Publicly documented:
 
-## What Is Shared vs Local
+- the four judge student accounts shown on `/login`
+- the shared student password `CODESTORMERS`
+- the fact that each student account has `10` live sessions
 
-Current persistence is split across two places:
+Private team-only items:
 
-- workspace accounts are stored in backend SQLite at `backend/app/data/auth.db`
-- training sessions, calibration, cached debriefs, and offline logs stay in browser `localStorage`
+- seeded internal admin accounts
+- the seeded developer account
+- real Anthropic and OpenAI keys
+- any backend database copied from a live environment
 
-That means:
+Do not publish private account credentials in docs, screenshots, or issue
+comments.
 
-- if teammates share the same backend, they share the same account database
-- if teammates use different browsers or machines, they do not automatically share training session history
-- pushing to GitHub should never include `backend/.env` or `backend/app/data/auth.db`
-- the fixed developer account also lives in that shared SQLite database
+## Open Repo Secret Handling
 
-## Secret Handling for an Open Repo
+Never commit real keys into tracked files.
 
-Do not commit real API keys to tracked files.
-
-Recommended pattern:
-
-1. Keep `backend/.env` in placeholder mode:
+Keep placeholders in `backend/.env`:
 
 ```env
 AI_API_KEY=SET_IN_ENV_MANAGER
+TRANSCRIPTION_API_KEY=SET_IN_ENV_MANAGER
 ```
 
-2. Store the real key outside the repo with your environment manager.
-
-With micromamba:
-
-```bash
-micromamba env config vars set -n hackathon AI_API_KEY='your_claude_key_here'
-micromamba env config vars set -n hackathon TRANSCRIPTION_API_KEY='your_openai_key_here'
-micromamba deactivate
-micromamba activate hackathon
-```
-
-With a one-off shell export:
+Use your shell or environment manager for the real values:
 
 ```bash
 export AI_API_KEY='your_claude_key_here'
 export TRANSCRIPTION_API_KEY='your_openai_key_here'
 ```
 
-If your backend is already running, restart it after changing the environment variable.
+Restart the backend after changing them.
 
-## Setup Pattern A: Each Collaborator Runs Their Own Backend
+## Recommended Deployment Shape
 
-Recommended when:
+Use:
 
-- each teammate can get their own Claude and OpenAI transcription keys
-- you want isolated account databases
-- you do not want one shared backend machine
+- `Vercel` for the `frontend`
+- one separate persistent Python host for the `backend`
 
-Each collaborator should:
+Reasons:
 
-1. Pull the repo.
-2. Copy `backend/.env.example` to `backend/.env`.
-3. Set the backend model config with placeholders only:
+- the frontend is a normal Next.js project
+- the backend needs persistent SQLite storage for auth quotas and review state
+- the backend currently accepts one `FRONTEND_ORIGIN` value for CORS
 
-```env
-AI_PROVIDER=anthropic
-AI_API_BASE_URL=https://api.anthropic.com/v1/messages
-AI_API_KEY=SET_IN_ENV_MANAGER
-AI_ANALYSIS_MODEL=claude-sonnet-4-6
-AI_DEBRIEF_MODEL=claude-sonnet-4-6
-AI_COACH_MODEL=claude-sonnet-4-6
-TRANSCRIPTION_API_BASE_URL=https://api.openai.com/v1
-TRANSCRIPTION_API_KEY=SET_IN_ENV_MANAGER
-TRANSCRIPTION_MODEL=gpt-4o-mini-transcribe
-```
+## Frontend On Vercel
 
-4. Store the real `AI_API_KEY` and `TRANSCRIPTION_API_KEY` in their own shell or micromamba env.
-5. Run the backend locally.
-6. Run the frontend locally.
+In Vercel:
 
-Result:
+1. Import the GitHub repo.
+2. Set the project root directory to `frontend`.
+3. Add `NEXT_PUBLIC_API_BASE_URL` pointing to the deployed backend API.
+4. Deploy.
 
-- each teammate has their own accounts in their own SQLite database
-- each teammate has their own browser-local training sessions
-
-## Setup Pattern B: One Shared Backend for the Team
-
-Recommended when:
-
-- only one teammate manages the Claude and transcription keys
-- you want all account creation and sign-in to hit the same backend
-- you want the team to avoid local backend setup
-
-One teammate or a private host should run:
-
-- the FastAPI backend
-- the SQLite account database
-- the Claude + OpenAI transcription configuration
-
-Other collaborators only need:
+Example:
 
 ```env
-NEXT_PUBLIC_API_BASE_URL=http://your-shared-backend:8001/api/v1
+NEXT_PUBLIC_API_BASE_URL=https://your-backend.example.com/api/v1
 ```
 
-Result:
+## Backend Deployment Checklist
 
-- all collaborators use the same account database
-- each collaborator still keeps their own training sessions in browser storage
-- pending admin reviewer requests are also shared, because they live in the backend account database
+The backend host needs:
 
-## Shared Backend Notes
+- Python 3.10+
+- persistent filesystem or volume for `backend/app/data/auth.db`
+- real `AI_API_KEY`
+- real `TRANSCRIPTION_API_KEY`
+- `FRONTEND_ORIGIN` set to the exact deployed frontend origin
 
-If you use one shared backend:
+Example:
 
-- back up `backend/app/data/auth.db` if account continuity matters
-- do not commit `auth.db`
-- expect users on different browsers to have different local session histories even when they share one backend
-- be aware that the fixed developer credentials are shared across that backend unless you customize the code for a private deployment
+```env
+FRONTEND_ORIGIN=https://your-project.vercel.app
+```
 
-## Push Checklist
+## Preview Deployment Caveat
 
-Before pushing to GitHub, verify:
+The backend CORS configuration currently allows one exact frontend origin.
 
-- `backend/.env` contains no real key
+That means:
+
+- a single stable Vercel production URL is the safest demo setup
+- Vercel preview URLs will not work automatically unless you widen backend CORS behavior in code
+
+## Git Push Checklist
+
+Before pushing:
+
+- `backend/.env` has placeholders only
 - `backend/app/data/auth.db` is not tracked
-- no secret appears in `git diff`
+- no private account credential is added to docs
+- `git status --short` is clean or intentionally staged
 
 Useful checks:
 
 ```bash
 git check-ignore -v backend/.env backend/app/data/auth.db
-rg -uuu -n "sk-|api_key|AI_API_KEY|TRANSCRIPTION_API_KEY|your_claude_key_here|your_openai_key_here" .
+rg -uuu -n "sk-|api_key|AI_API_KEY|TRANSCRIPTION_API_KEY" .
 git status --short
 ```
-
-## Current Limits
-
-- this is still demo-oriented auth, not production identity management
-- the fixed developer credentials are hard-coded for the local demo and should be changed before any real deployment
-- password resets, email verification, and multi-device session sync are not implemented
-- training sessions are still local to the browser profile that created them

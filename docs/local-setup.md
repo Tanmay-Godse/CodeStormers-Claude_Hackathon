@@ -1,23 +1,22 @@
 # Local Setup Guide
 
-This guide explains the current local demo setup and the trainer behavior that
-the UI exposes today.
+This guide is the fuller developer-oriented setup for the current demo build.
 
-## Current Stack
+## Current Architecture
 
-- `Frontend`: Next.js app with dashboard, knowledge lab, library, profile, trainer, and review flows
-- `Backend`: FastAPI app with procedure loading, safety gate, analysis, coaching, review queue, and debrief generation
-- `Main model`: `claude-sonnet-4-6`
-- `Speech-to-text`: `gpt-4o-mini-transcribe`
-- `Session storage`: browser `localStorage`
-- `Accounts`: local demo accounts persisted through the backend
-- `Developer approvals`: fixed super-user account gates admin promotion
+- `frontend`: Next.js app with dashboard, trainer, knowledge, library, profile, review, admin, and developer flows
+- `backend`: FastAPI app with auth, AI routing, safety gate, review queue, and TTS
+- `main AI model`: `claude-sonnet-4-6`
+- `learning model`: `claude-haiku-4-5`
+- `transcription`: `gpt-4o-mini-transcribe`
+- `auth persistence`: SQLite at `backend/app/data/auth.db`
+- `session persistence`: browser `localStorage`
 
-## Local Services
+## Service URLs
 
 - frontend: `http://localhost:3000`
 - backend: `http://localhost:8001`
-- API base for frontend: `http://localhost:8001/api/v1`
+- frontend API target: `http://localhost:8001/api/v1`
 
 ## Backend Setup
 
@@ -41,11 +40,14 @@ AI_API_KEY=SET_IN_ENV_MANAGER
 AI_ANALYSIS_MODEL=claude-sonnet-4-6
 AI_DEBRIEF_MODEL=claude-sonnet-4-6
 AI_COACH_MODEL=claude-sonnet-4-6
+AI_LEARNING_MODEL=claude-haiku-4-5
 
 AI_TIMEOUT_SECONDS=60
 AI_ANALYSIS_MAX_TOKENS=1400
 AI_DEBRIEF_MAX_TOKENS=1200
+AI_COACH_MAX_TOKENS=450
 AI_SAFETY_MAX_TOKENS=600
+AI_LEARNING_MAX_TOKENS=1800
 HUMAN_REVIEW_CONFIDENCE_THRESHOLD=0.78
 GRADING_CONFIDENCE_THRESHOLD=0.80
 ANTHROPIC_VERSION=2023-06-01
@@ -56,7 +58,7 @@ TRANSCRIPTION_MODEL=gpt-4o-mini-transcribe
 TRANSCRIPTION_TIMEOUT_SECONDS=60
 ```
 
-Start the backend:
+Run it:
 
 ```bash
 uvicorn app.main:app --reload --port 8001
@@ -68,7 +70,6 @@ uvicorn app.main:app --reload --port 8001
 cd frontend
 npm install
 cp .env.local.example .env.local
-npm run dev
 ```
 
 Frontend env:
@@ -77,67 +78,84 @@ Frontend env:
 NEXT_PUBLIC_API_BASE_URL=http://localhost:8001/api/v1
 ```
 
-## Provider Compatibility
+Run it:
 
-The current docs are written around Anthropic plus OpenAI transcription, but the
-backend config still supports:
+```bash
+npm run dev
+```
 
-- `AI_PROVIDER=auto` for provider auto-detection
-- Anthropic-style `/messages` endpoints
-- OpenAI-compatible AI endpoints
-- older `OPENAI_*` and `ANTHROPIC_*` env aliases
+## Account Model
 
-If you use a nonstandard proxy, set `AI_PROVIDER` explicitly.
+The current public demo does not allow open signup.
+
+Public seeded student accounts:
+
+- `Student_1@gmail.com`
+- `Student_2@gmail.com`
+- `Student_3@gmail.com`
+- `Student_4@gmail.com`
+- shared password: `CODESTORMERS`
+
+Public demo rules:
+
+- each student account has `10` live sessions
+- consuming a live session happens when a camera run starts
+- only admin or developer accounts can reset the limit
+- unknown usernames are redirected to `/access-required`
+
+Private internal admin and developer accounts are also seeded in the backend for
+team operations, but they are intentionally not shown on the public login page
+and should not be copied into public-facing docs or judge instructions.
+
+## Persistence Model
+
+Two storage layers exist:
+
+- backend SQLite:
+  - auth accounts
+  - admin approval state
+  - live-session quotas
+  - session tokens
+- browser `localStorage`:
+  - live session history
+  - cached debriefs
+  - local profile snapshot
+  - knowledge progress
+  - offline-first logs
+
+That means:
+
+- changing browsers does not carry over student session history
+- changing or deleting `auth.db` resets seeded-account quota state
+- restarting the backend reapplies the latest seeded-account definitions from code
 
 ## Main Routes
 
-- `/dashboard`: default app landing page
-- `/knowledge`: gamified study and flashcard mode
-- `/train/simple-interrupted-suture`: live trainer
-- `/library`: learning library
-- `/profile`: local account profile and editing
-- `/review/[sessionId]`: session review and debrief
-- `/admin/reviews`: faculty review queue
-- `/developer/approvals`: fixed developer approval queue
-
-## Local Auth Model
-
-The login page is shared for everyone.
-
-- `student`: default learner workspace
-- `admin`: only becomes active after developer approval
-- `developer`: fixed super-user account used for approvals and admin queue access
-
-Fixed developer credentials for the local demo:
-
-- email: `developer@gmail.com`
-- password: `Qwerty@123`
-
-Important behavior:
-
-- the developer email cannot be created from the UI
-- selecting `Admin reviewer` during account creation creates a student account with a pending admin request
-- only the fixed developer account can approve or reject those requests
+- `/login`
+- `/dashboard`
+- `/train/simple-interrupted-suture`
+- `/review/[sessionId]`
+- `/knowledge`
+- `/library`
+- `/profile`
+- `/admin/reviews`
+- `/developer/approvals`
+- `/access-required`
 
 ## Live Trainer Behavior
 
-The trainer is intentionally constrained for the hackathon demo:
+Current demo constraints:
 
+- one core procedure: `simple-interrupted-suture`
 - each camera run is limited to `2 minutes`
-- the recurring camera-based coach refresh runs every `1 second`
-- the voice loop listens continuously between coach turns when `Audio coaching` is on
-- the camera surface itself stays clean while live; setup overlays are not drawn on top of the video
-- setup automatically passes once a safe simulated practice surface is clearly visible
+- proactive live analysis runs every `1 second`
+- setup accepts clearly visible simulated surfaces such as an orange, banana, or foam pad
 
-## Live Session Defaults
+Fixed defaults:
 
-The learner no longer has to manage a large setup checkbox cluster.
-
-Always on for the current demo:
-
-- `Simulation-only confirmation`
-- `Audio coaching`
-- `Offline-first logging`
+- `Simulation-only confirmation`: on
+- `Audio coaching`: on
+- `Offline-first logging`: on
 
 Still configurable:
 
@@ -147,75 +165,43 @@ Still configurable:
 - `Learner focus`
 - `Low-bandwidth capture`
 
-## Review Flow Notes
+## Review And Admin Flow
 
-- debrief requests still need network access
-- if `Offline-first logging` is enabled and the device is offline, the review page keeps the local history visible and waits to regenerate the AI debrief until the device reconnects
-- low-confidence attempts stay ungraded instead of receiving a forced score
-- debrief audio playback appears when `Audio coaching` was enabled for that session
-- the debrief response includes a personal `error_fingerprint` and one `adaptive_drill`
-
-## Human Review Queue
-
-Admin reviewers can open `http://localhost:3000/admin/reviews` after the fixed
-developer account approves their pending request.
-
-The queue primarily collects:
-
-- safety-gate blocked sessions
-- low-confidence attempts
-- unclear or unsafe outcomes
-
-Each case can be resolved with reviewer notes, a corrected status, and corrected
-coaching text.
+- low-confidence or blocked attempts can create review cases
+- `/admin/reviews` is for resolved and pending human-review tickets
+- developer-only approvals live at `/developer/approvals`
+- admin and developer accounts can reset demo account live-session limits
 
 ## Verification
-
-Backend smoke checks:
-
-```bash
-curl http://localhost:8001/api/v1/health
-curl http://localhost:8001/api/v1/procedures/simple-interrupted-suture
-curl -X POST http://localhost:8001/api/v1/knowledge-pack \
-  -H "Content-Type: application/json" \
-  -d '{"procedure_id":"simple-interrupted-suture","skill_level":"beginner","feedback_language":"en"}'
-curl -X POST http://localhost:8001/api/v1/debrief \
-  -H "Content-Type: application/json" \
-  -d '{"session_id":"demo-session","procedure_id":"simple-interrupted-suture","skill_level":"beginner","feedback_language":"en","events":[]}'
-```
-
-Frontend checks:
 
 ```bash
 cd frontend
 npm run lint
 npm run typecheck
-```
+npm run build
 
-Backend checks:
-
-```bash
-cd backend
+cd ../backend
 source .venv/bin/activate
 pytest
 ```
 
-Verified smoke flow on `2026-03-22`:
+Useful smoke checks:
 
-- login and account creation
-- fixed developer sign-in
-- admin-request approval flow
-- dashboard render
-- library render
-- knowledge lab render
-- profile edit save
-- live trainer camera start
-- analysis request from `Check My Step`
-- review page load after a captured attempt
+```bash
+curl http://localhost:8001/api/v1/health
+curl http://localhost:8001/api/v1/procedures/simple-interrupted-suture
+```
 
 ## Troubleshooting
 
-- If the camera does not start, make sure the app is opened on `localhost`.
-- If the mic does not open, allow microphone permission and restart the camera.
-- If the coach cannot respond to learner voice, confirm the OpenAI transcription key is configured.
-- If the review page says the debrief is unavailable while offline, reconnect and refresh that session review.
+- If the login page still shows old seeded-account behavior after code changes, restart the backend.
+- If the frontend is deployed on a different origin, update `FRONTEND_ORIGIN` in the backend and restart it.
+- If live voice replies are missing, verify both browser microphone permission and `TRANSCRIPTION_API_KEY`.
+- If learner history seems missing, confirm you are in the same browser profile that created the session.
+
+## Related Docs
+
+- [docs/how-to-run.md](how-to-run.md)
+- [docs/vercel-deployment.md](vercel-deployment.md)
+- [docs/api-reference.md](api-reference.md)
+- [docs/team-setup.md](team-setup.md)
