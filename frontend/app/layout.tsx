@@ -16,7 +16,7 @@ const bodyFont = IBM_Plex_Sans({
 export const metadata: Metadata = {
   title: "AI Clinical Skills Coach",
   description:
-    "Simulation-only suturing practice coach with a live mock trainer loop.",
+    "Simulation-only suturing practice coach with live stage-by-stage feedback.",
 };
 
 export default function RootLayout({

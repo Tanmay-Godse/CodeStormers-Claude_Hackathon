@@ -13,6 +13,7 @@ This package contains the FastAPI service for the AI Clinical Skills Coach backe
 - honor multilingual and equity-mode debrief settings
 - return stable fallback debrief content when the debrief AI path is unavailable
 - persist a lightweight human-review queue for flagged sessions
+- persist workspace accounts in a lightweight SQLite database
 
 ## Setup
 
@@ -64,6 +65,7 @@ Backward compatibility:
 
 - `OPENAI_*` and `ANTHROPIC_*` environment variables still work as aliases
 - `AI_PROVIDER=auto` is the preferred default going forward
+- for public repos, keep `AI_API_KEY` out of tracked files and inject it through your environment manager
 
 ## Provider Auto-Detection
 
@@ -96,20 +98,48 @@ vllm serve chaitnya26/Qwen2.5-Omni-3B-Fork --port 8000 --api-key EMPTY
 The local docs assume vLLM stays on port `8000` and this FastAPI backend runs on port `8001`.
 Use a vision-capable model for `AI_ANALYSIS_MODEL`. Text-only models will not work for the analyze route.
 
+### Hosted Z.AI
+
+```env
+AI_PROVIDER=auto
+AI_API_BASE_URL=https://api.z.ai/api/paas/v4
+AI_API_KEY=SET_IN_ENV_MANAGER
+AI_ANALYSIS_MODEL=glm-4.6v-flash
+AI_DEBRIEF_MODEL=glm-4.6v-flash
+AI_COACH_MODEL=glm-4.6v-flash
+```
+
+Use this when you want shared hosted image analysis and do not want to run a local model server on one teammate machine.
+
 ### Anthropic-Style
 
 ```env
 AI_PROVIDER=auto
 AI_API_BASE_URL=https://api.anthropic.com/v1/messages
-AI_API_KEY=your_api_key_here
+AI_API_KEY=SET_IN_ENV_MANAGER
 AI_ANALYSIS_MODEL=your_vision_capable_model
 AI_DEBRIEF_MODEL=your_text_or_multimodal_model
 ANTHROPIC_VERSION=2023-06-01
 ```
 
+### Open-Repo Secret Handling
+
+Recommended with micromamba:
+
+```bash
+micromamba env config vars set -n hackathon AI_API_KEY='your_real_key_here'
+micromamba deactivate
+micromamba activate hackathon
+```
+
+Keep `backend/.env` on a placeholder such as `AI_API_KEY=SET_IN_ENV_MANAGER`.
+
 ## Endpoints
 
 - `GET /api/v1/health`
+- `GET /api/v1/auth/accounts/preview`
+- `POST /api/v1/auth/accounts`
+- `POST /api/v1/auth/sign-in`
 - `GET /api/v1/procedures/{id}`
 - `POST /api/v1/analyze-frame`
 - `POST /api/v1/debrief`
@@ -144,6 +174,7 @@ pytest
 The backend test suite covers:
 
 - API status-code mapping
+- SQLite-backed auth routes and legacy password-hash upgrade behavior
 - provider auto-detection
 - overlay-target validation
 - fallback debrief behavior
@@ -151,3 +182,4 @@ The backend test suite covers:
 - localized fallback debrief behavior
 
 For full app setup and troubleshooting, use `../docs/local-setup.md`.
+For collaborator setup and secret handling in an open repo, use `../docs/team-setup.md`.

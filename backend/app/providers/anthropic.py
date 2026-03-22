@@ -121,6 +121,12 @@ def _to_anthropic_content(user_content: list[dict[str, Any]]) -> list[dict[str, 
                     "source": source,
                 }
             )
+            continue
+
+        if item_type == "audio":
+            raise AIRequestError(
+                "Audio input is not supported for the Anthropic provider in this build."
+            )
 
     if not converted:
         raise AIRequestError("The model request did not include any usable user content.")
@@ -187,4 +193,3 @@ def _extract_anthropic_tool_input(response_data: dict[str, Any]) -> dict[str, An
         )
 
     return parsed_payload
-

@@ -110,8 +110,8 @@ export function OverlayRenderer({
     .filter(Boolean);
 
   return (
-    <div className="overlay-layer" ref={containerRef}>
-      <svg className="overlay-layer" preserveAspectRatio="none">
+    <div className="overlay-layer overlay-passive" ref={containerRef}>
+      <svg className="overlay-layer overlay-passive" preserveAspectRatio="none">
         {markers}
       </svg>
     </div>

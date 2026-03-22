@@ -5,7 +5,7 @@ This package contains the Next.js frontend for the AI Clinical Skills Coach trai
 ## Responsibilities
 
 - landing page and entry flow
-- student and admin login screens with local account creation
+- student and admin login screens with SQLite-backed account creation
 - trainer page with camera access and frame capture
 - calibration UI and overlay rendering
 - stage-by-stage feedback display
@@ -44,7 +44,7 @@ This should point at the FastAPI backend, not directly at your model server.
 ## Routes
 
 - `/`: landing page and project framing
-- `/login`: local account sign-in and create-account flow for students and admin reviewers
+- `/login`: workspace account sign-in and create-account flow for students and admin reviewers
 - `/library`: open learning-library page for rubric and benchmark assets
 - `/admin/reviews`: human-in-the-loop validation queue
 - `/train/[procedure]`: live trainer flow with capture, analyze, stage progression, and review handoff
@@ -53,6 +53,8 @@ This should point at the FastAPI backend, not directly at your model server.
 ## Local Session Model
 
 The frontend stores training history in browser `localStorage`.
+
+Account records are not stored in the frontend anymore. Account preview, create-account, and sign-in go through the backend SQLite database, while the signed-in user snapshot is still cached locally for convenience.
 
 What is stored:
 
@@ -76,6 +78,7 @@ How debrief caching works:
 
 - the frontend only talks to the FastAPI backend
 - the browser never sends Anthropic or OpenAI-compatible API keys directly
+- account preview, create-account, and sign-in requests go through the backend and persist in SQLite
 - analyze requests are only sent on `Check My Step`
 - the trainer sends `simulation_confirmation` before analysis
 - the trainer can send `feedback_language` and `equity_mode` for multilingual and lower-resource coaching
@@ -92,6 +95,10 @@ The review page depends on the same browser profile and local machine that creat
 ### Procedure load fails
 
 Check that `NEXT_PUBLIC_API_BASE_URL` points at a running backend and that `/api/v1/health` succeeds.
+
+### Login or account creation fails
+
+Check that the backend is running. Workspace account preview, creation, and sign-in now require the FastAPI backend because accounts persist in SQLite.
 
 ### Review text looks stale
 

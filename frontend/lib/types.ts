@@ -6,6 +6,10 @@ export type SafetyGateStatus = "cleared" | "blocked" | "needs_human_review";
 export type ReviewCaseStatus = "pending" | "resolved";
 export type AuthMode = "sign-in" | "create-account";
 export type FeedbackLanguage = "en" | "es" | "fr" | "hi";
+export type CoachVoicePreset =
+  | "guide_male"
+  | "mentor_male"
+  | "system_default";
 
 export type Point = {
   x: number;
@@ -47,6 +51,47 @@ export type ProcedureDefinition = {
   stages: ProcedureStage[];
 };
 
+export type HealthStatus = {
+  status: string;
+  simulation_only: boolean;
+};
+
+export type CoachChatMessage = {
+  role: "user" | "assistant";
+  content: string;
+};
+
+export type CoachChatRequest = {
+  procedure_id: string;
+  stage_id: string;
+  skill_level: SkillLevel;
+  feedback_language: FeedbackLanguage;
+  simulation_confirmation: boolean;
+  image_base64?: string;
+  audio_base64?: string;
+  audio_format?: "wav" | "mp3";
+  student_name?: string;
+  session_id?: string;
+  equity_mode: ApiEquityMode;
+  messages: CoachChatMessage[];
+};
+
+export type CoachSpeechRequest = {
+  text: string;
+  feedback_language: FeedbackLanguage;
+  coach_voice: CoachVoicePreset;
+};
+
+export type CoachChatResponse = {
+  conversation_stage: "goal_setting" | "planning" | "guiding" | "blocked";
+  coach_message: string;
+  plan_summary: string;
+  suggested_next_step: string;
+  camera_observations: string[];
+  stage_focus: string[];
+  learner_goal_summary: string;
+};
+
 export type Issue = {
   code: string;
   severity: "low" | "medium" | "high";
@@ -57,6 +102,7 @@ export type EquityModeSettings = {
   enabled: boolean;
   feedbackLanguage: FeedbackLanguage;
   audioCoaching: boolean;
+  coachVoice: CoachVoicePreset;
   lowBandwidthMode: boolean;
   cheapPhoneMode: boolean;
   offlinePracticeLogging: boolean;

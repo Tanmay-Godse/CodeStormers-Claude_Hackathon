@@ -2,19 +2,27 @@
 
 import Link from "next/link";
 import { useParams, useRouter } from "next/navigation";
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import { CameraFeed, type CameraFeedHandle } from "@/components/CameraFeed";
 import { CalibrationOverlay } from "@/components/CalibrationOverlay";
 import { FeedbackCard } from "@/components/FeedbackCard";
 import { OverlayRenderer } from "@/components/OverlayRenderer";
 import { ProcedureStepper } from "@/components/ProcedureStepper";
+import { VoiceCoachPanel } from "@/components/VoiceCoachPanel";
+import {
+  speakTextAndWait,
+  startVoiceRecording,
+  stopSpeechPlayback,
+  type RecordedVoiceClip,
+  type VoiceRecordingController,
+} from "@/lib/audio";
 import {
   FEEDBACK_LANGUAGE_OPTIONS,
   getFeedbackLanguageLabel,
   toApiEquityMode,
 } from "@/lib/equity";
-import { analyzeFrame, getProcedure } from "@/lib/api";
+import { analyzeFrame, coachChat, getProcedure } from "@/lib/api";
 import { createDefaultCalibration } from "@/lib/geometry";
 import {
   clearAuthUser,
@@ -25,17 +33,36 @@ import {
   startFreshSession,
 } from "@/lib/storage";
 import type {
-    AnalyzeFrameResponse,
-    AuthUser,
-    Calibration,
-    CalibrationMode,
-    EquityModeSettings,
-    OfflinePracticeLog,
-    ProcedureDefinition,
-    SessionEvent,
-    SessionRecord,
-    SkillLevel,
-  } from "@/lib/types";
+  AnalyzeFrameResponse,
+  AuthUser,
+  Calibration,
+  CalibrationMode,
+  CoachChatMessage,
+  CoachChatResponse,
+  EquityModeSettings,
+  OfflinePracticeLog,
+  ProcedureDefinition,
+  SessionEvent,
+  SessionRecord,
+  SkillLevel,
+} from "@/lib/types";
+
+const CAMERA_OVERLAY_TIMEOUT_MS = 10_000;
+const AUTO_COACH_INTERVAL_MS = 12_000;
+const VOICE_RECORDING_MAX_DURATION_MS = 10_000;
+const VOICE_RECORDING_MIN_SPEECH_MS = 400;
+const VOICE_RECORDING_SILENCE_DURATION_MS = 1_100;
+const VOICE_RELISTEN_DELAY_MS = 300;
+const VOICE_PROACTIVE_REPROMPT_AFTER_SILENT_WINDOWS = 3;
+
+type VoiceSessionStatus =
+  | "idle"
+  | "starting"
+  | "watching"
+  | "speaking"
+  | "listening"
+  | "thinking"
+  | "paused";
 
 function findNextStageId(
   procedure: ProcedureDefinition,
@@ -98,10 +125,23 @@ export default function TrainProcedurePage() {
   const [analyzeError, setAnalyzeError] = useState<string | null>(null);
   const [feedback, setFeedback] = useState<AnalyzeFrameResponse | null>(null);
   const [feedbackStageId, setFeedbackStageId] = useState<string | null>(null);
+  const [coachMessages, setCoachMessages] = useState<CoachChatMessage[]>([]);
+  const [coachTurn, setCoachTurn] = useState<CoachChatResponse | null>(null);
+  const [coachError, setCoachError] = useState<string | null>(null);
+  const [, setIsCoachLoading] = useState(false);
+  const [showCalibrationOverlay, setShowCalibrationOverlay] = useState(false);
+  const [showFeedbackOverlay, setShowFeedbackOverlay] = useState(false);
   const [frozenFrameUrl, setFrozenFrameUrl] = useState<string | null>(null);
   const [studentQuestion, setStudentQuestion] = useState("");
   const [simulationConfirmed, setSimulationConfirmed] = useState(false);
   const [isOnline, setIsOnline] = useState(true);
+  const [voiceSessionStatus, setVoiceSessionStatus] =
+    useState<VoiceSessionStatus>("idle");
+  const calibrationOverlayTimeoutRef = useRef<number | null>(null);
+  const feedbackOverlayTimeoutRef = useRef<number | null>(null);
+  const activeVoiceRecordingRef = useRef<VoiceRecordingController | null>(null);
+  const coachMessagesRef = useRef<CoachChatMessage[]>([]);
+  const voiceLoopGenerationRef = useRef(0);
 
   useEffect(() => {
     if (typeof window === "undefined") {
@@ -117,6 +157,22 @@ export default function TrainProcedurePage() {
     return () => {
       window.removeEventListener("online", syncOnlineStatus);
       window.removeEventListener("offline", syncOnlineStatus);
+    };
+  }, []);
+
+  useEffect(() => {
+    return () => {
+      if (typeof window === "undefined") {
+        return;
+      }
+
+      if (calibrationOverlayTimeoutRef.current !== null) {
+        window.clearTimeout(calibrationOverlayTimeoutRef.current);
+      }
+
+      if (feedbackOverlayTimeoutRef.current !== null) {
+        window.clearTimeout(feedbackOverlayTimeoutRef.current);
+      }
     };
   }, []);
 
@@ -236,10 +292,104 @@ export default function TrainProcedurePage() {
     feedback?.grading_decision === "graded" &&
     procedure &&
     !findNextStageId(procedure, currentStageId);
+  const latestLearnerGoal = useMemo(
+    () =>
+      [...coachMessages]
+        .reverse()
+        .find((message) => message.role === "user")
+        ?.content.trim() ?? "",
+    [coachMessages],
+  );
+  const voiceChatEnabled =
+    cameraReady && equityMode.enabled && equityMode.audioCoaching;
+
+  useEffect(() => {
+    coachMessagesRef.current = coachMessages;
+  }, [coachMessages]);
 
   function persistSession(nextSession: SessionRecord) {
     saveSession(nextSession);
     setSession(nextSession);
+  }
+
+  function clearCalibrationOverlayTimer() {
+    if (
+      typeof window !== "undefined" &&
+      calibrationOverlayTimeoutRef.current !== null
+    ) {
+      window.clearTimeout(calibrationOverlayTimeoutRef.current);
+      calibrationOverlayTimeoutRef.current = null;
+    }
+  }
+
+  function clearFeedbackOverlayTimer() {
+    if (
+      typeof window !== "undefined" &&
+      feedbackOverlayTimeoutRef.current !== null
+    ) {
+      window.clearTimeout(feedbackOverlayTimeoutRef.current);
+      feedbackOverlayTimeoutRef.current = null;
+    }
+  }
+
+  function showCalibrationOverlayForTenSeconds(forceVisible = false) {
+    if (typeof window === "undefined" || (!cameraReady && !forceVisible)) {
+      return;
+    }
+
+    clearCalibrationOverlayTimer();
+    setShowCalibrationOverlay(true);
+    calibrationOverlayTimeoutRef.current = window.setTimeout(() => {
+      setShowCalibrationOverlay(false);
+      calibrationOverlayTimeoutRef.current = null;
+    }, CAMERA_OVERLAY_TIMEOUT_MS);
+  }
+
+  function showFeedbackOverlayForTenSeconds() {
+    if (typeof window === "undefined") {
+      return;
+    }
+
+    clearFeedbackOverlayTimer();
+    setShowFeedbackOverlay(true);
+    feedbackOverlayTimeoutRef.current = window.setTimeout(() => {
+      setShowFeedbackOverlay(false);
+      feedbackOverlayTimeoutRef.current = null;
+    }, CAMERA_OVERLAY_TIMEOUT_MS);
+  }
+
+  function cancelActiveVoiceRecording() {
+    const activeRecording = activeVoiceRecordingRef.current;
+    activeVoiceRecordingRef.current = null;
+
+    if (!activeRecording) {
+      return;
+    }
+
+    void activeRecording.cancel().catch(() => {});
+  }
+
+  async function waitForCoachLoop(delayMs: number) {
+    await new Promise((resolve) => {
+      window.setTimeout(resolve, delayMs);
+    });
+  }
+
+  function handleCameraReadyChange(ready: boolean) {
+    setCameraReady(ready);
+
+    if (!ready) {
+      cancelActiveVoiceRecording();
+      stopSpeechPlayback();
+      clearCalibrationOverlayTimer();
+      clearFeedbackOverlayTimer();
+      setShowCalibrationOverlay(false);
+      setShowFeedbackOverlay(false);
+      setVoiceSessionStatus("idle");
+      return;
+    }
+
+    showCalibrationOverlayForTenSeconds(true);
   }
 
   function handleSkillLevelChange(nextSkillLevel: SkillLevel) {
@@ -268,6 +418,32 @@ export default function TrainProcedurePage() {
       equityMode: nextEquityMode,
       debrief: undefined,
       updatedAt: new Date().toISOString(),
+    });
+  }
+
+  function handleEquityOptionChange(
+    key: "audioCoaching" | "lowBandwidthMode" | "cheapPhoneMode" | "offlinePracticeLogging",
+    value: boolean,
+  ) {
+    handleEquityModeChange({
+      ...equityMode,
+      enabled: true,
+      [key]: value,
+    });
+  }
+
+  function handleFeedbackLanguageChange(language: EquityModeSettings["feedbackLanguage"]) {
+    handleEquityModeChange({
+      ...equityMode,
+      enabled: true,
+      feedbackLanguage: language,
+    });
+  }
+
+  function handleCoachVoiceChange(voice: EquityModeSettings["coachVoice"]) {
+    handleEquityModeChange({
+      ...equityMode,
+      coachVoice: voice,
     });
   }
 
@@ -305,6 +481,15 @@ export default function TrainProcedurePage() {
     setCurrentStageId(procedure.stages[0]?.id ?? "");
     setFeedback(null);
     setFeedbackStageId(null);
+    setCoachMessages([]);
+    setCoachTurn(null);
+    setCoachError(null);
+    setIsCoachLoading(false);
+    cancelActiveVoiceRecording();
+    stopSpeechPlayback();
+    setVoiceSessionStatus(cameraReady ? "starting" : "idle");
+    clearFeedbackOverlayTimer();
+    setShowFeedbackOverlay(false);
     setFrozenFrameUrl(null);
     setStudentQuestion("");
     setSimulationConfirmed(false);
@@ -334,6 +519,8 @@ export default function TrainProcedurePage() {
       offlinePracticeLogs: [...sessionSnapshot.offlinePracticeLogs, offlineLog],
       updatedAt: new Date().toISOString(),
     });
+    clearFeedbackOverlayTimer();
+    setShowFeedbackOverlay(false);
     setFeedback(null);
     setFeedbackStageId(null);
     setAnalyzeError(reason);
@@ -380,7 +567,7 @@ export default function TrainProcedurePage() {
         stage_id: currentStage.id,
         skill_level: skillLevel,
         image_base64: capturedFrame.base64,
-        student_question: studentQuestion.trim() || undefined,
+        student_question: studentQuestion.trim() || latestLearnerGoal || undefined,
         simulation_confirmation: simulationConfirmed,
         session_id: session.id,
         student_name: authUser.name,
@@ -431,6 +618,7 @@ export default function TrainProcedurePage() {
 
       setFeedback(response);
       setFeedbackStageId(currentStage.id);
+      showFeedbackOverlayForTenSeconds();
     } catch (error) {
       if (
         equityMode.enabled &&
@@ -480,6 +668,310 @@ export default function TrainProcedurePage() {
     router.push(`/review/${session.id}`);
   }
 
+  function handleToggleCalibrationMode() {
+    setCalibrationMode((current) => (current === "corners" ? "guide" : "corners"));
+    showCalibrationOverlayForTenSeconds();
+  }
+
+  function handleShowCameraOverlay() {
+    showCalibrationOverlayForTenSeconds();
+
+    if (feedbackStageId === currentStageId && (feedback?.overlay_target_ids.length ?? 0) > 0) {
+      showFeedbackOverlayForTenSeconds();
+    }
+  }
+
+  const requestCoachTurn = useCallback(async ({
+    audioClip,
+    messages,
+  }: {
+    audioClip?: RecordedVoiceClip | null;
+    messages: CoachChatMessage[];
+  }): Promise<CoachChatResponse | null> => {
+    if (!procedure || !currentStage || !session || !authUser) {
+      return null;
+    }
+
+    setIsCoachLoading(true);
+    setCoachError(null);
+
+    try {
+      const capturedFrame =
+        cameraReady && simulationConfirmed
+          ? await cameraRef.current?.captureFrame()
+          : null;
+
+      const response = await coachChat({
+        procedure_id: procedure.id,
+        stage_id: currentStage.id,
+        skill_level: skillLevel,
+        feedback_language: equityMode.feedbackLanguage,
+        simulation_confirmation: simulationConfirmed,
+        image_base64: capturedFrame?.base64,
+        audio_base64: audioClip?.base64,
+        audio_format: audioClip?.format,
+        session_id: session.id,
+        student_name: authUser.name,
+        equity_mode: toApiEquityMode({
+          ...equityMode,
+          audioCoaching: equityMode.enabled && equityMode.audioCoaching,
+          lowBandwidthMode: equityMode.enabled && equityMode.lowBandwidthMode,
+          cheapPhoneMode: equityMode.enabled && equityMode.cheapPhoneMode,
+          offlinePracticeLogging:
+            equityMode.enabled && equityMode.offlinePracticeLogging,
+        }),
+        messages,
+      });
+
+      setCoachTurn(response);
+      return response;
+    } catch (error) {
+      setCoachError(
+        error instanceof Error
+          ? error.message
+          : "The voice coach could not respond right now.",
+      );
+      return null;
+    } finally {
+      setIsCoachLoading(false);
+    }
+  }, [
+    authUser,
+    cameraReady,
+    currentStage,
+    equityMode,
+    procedure,
+    session,
+    simulationConfirmed,
+    skillLevel,
+  ]);
+
+  const appendCoachMessage = useCallback((
+    role: CoachChatMessage["role"],
+    message: string,
+  ) => {
+    const trimmed = message.trim();
+    if (!trimmed) {
+      return;
+    }
+
+    setCoachMessages((current) => {
+      const lastMessage = current.at(-1);
+      if (lastMessage?.role === role && lastMessage.content === trimmed) {
+        return current;
+      }
+
+      const nextMessages = [
+        ...current.slice(-7),
+        {
+          role,
+          content: trimmed,
+        },
+      ];
+      coachMessagesRef.current = nextMessages;
+      return nextMessages;
+    });
+  }, []);
+
+  useEffect(() => {
+    setCoachTurn(null);
+    setCoachMessages([]);
+    coachMessagesRef.current = [];
+    setVoiceSessionStatus(cameraReady ? "starting" : "idle");
+  }, [cameraReady, currentStageId]);
+
+  useEffect(() => {
+    const generation = voiceLoopGenerationRef.current + 1;
+    voiceLoopGenerationRef.current = generation;
+    cancelActiveVoiceRecording();
+    stopSpeechPlayback();
+
+    if (!cameraReady || !procedure || !currentStage || !session || !authUser) {
+      setVoiceSessionStatus("idle");
+      return () => {
+        cancelActiveVoiceRecording();
+        stopSpeechPlayback();
+      };
+    }
+
+    let cancelled = false;
+
+    async function runVoiceCoachLoop() {
+      let shouldRequestCoachTurn = true;
+      let silentListenWindows = 0;
+
+      while (!cancelled && voiceLoopGenerationRef.current === generation) {
+        if (shouldRequestCoachTurn) {
+          setVoiceSessionStatus(
+            coachMessagesRef.current.length === 0 ? "starting" : "watching",
+          );
+
+          const proactiveResponse = await requestCoachTurn({
+            messages: coachMessagesRef.current.slice(-6),
+          });
+
+          if (cancelled || voiceLoopGenerationRef.current !== generation) {
+            return;
+          }
+
+          if (!proactiveResponse) {
+            setVoiceSessionStatus("paused");
+            await waitForCoachLoop(AUTO_COACH_INTERVAL_MS);
+            continue;
+          }
+
+          appendCoachMessage("assistant", proactiveResponse.coach_message);
+
+          if (voiceChatEnabled) {
+            setVoiceSessionStatus("speaking");
+            await speakTextAndWait(
+              proactiveResponse.coach_message,
+              equityMode.feedbackLanguage,
+              equityMode.coachVoice,
+            );
+
+            if (cancelled || voiceLoopGenerationRef.current !== generation) {
+              return;
+            }
+          }
+
+          silentListenWindows = 0;
+          shouldRequestCoachTurn = false;
+        }
+
+        if (!voiceChatEnabled) {
+          setVoiceSessionStatus(simulationConfirmed ? "watching" : "starting");
+          await waitForCoachLoop(AUTO_COACH_INTERVAL_MS);
+          shouldRequestCoachTurn = true;
+          continue;
+        }
+
+        setVoiceSessionStatus("listening");
+
+        let recordingController: VoiceRecordingController | null = null;
+        try {
+          recordingController = await startVoiceRecording({
+            maxDurationMs: VOICE_RECORDING_MAX_DURATION_MS,
+            minSpeechDurationMs: VOICE_RECORDING_MIN_SPEECH_MS,
+            silenceDurationMs: VOICE_RECORDING_SILENCE_DURATION_MS,
+          });
+        } catch (error) {
+          setCoachError(
+            error instanceof Error
+              ? error.message
+              : "Microphone access is required for hands-free voice chat.",
+          );
+          setVoiceSessionStatus("paused");
+          await waitForCoachLoop(AUTO_COACH_INTERVAL_MS);
+          shouldRequestCoachTurn = true;
+          continue;
+        }
+
+        if (!recordingController) {
+          setCoachError(
+            "This browser does not support microphone recording for the voice coach.",
+          );
+          setVoiceSessionStatus("paused");
+          await waitForCoachLoop(AUTO_COACH_INTERVAL_MS);
+          shouldRequestCoachTurn = true;
+          continue;
+        }
+
+        activeVoiceRecordingRef.current = recordingController;
+        const learnerClip = await recordingController.result;
+        if (activeVoiceRecordingRef.current === recordingController) {
+          activeVoiceRecordingRef.current = null;
+        }
+
+        if (cancelled || voiceLoopGenerationRef.current !== generation) {
+          return;
+        }
+
+        if (
+          !learnerClip ||
+          learnerClip.durationMs < VOICE_RECORDING_MIN_SPEECH_MS
+        ) {
+          silentListenWindows += 1;
+          setVoiceSessionStatus("listening");
+
+          if (
+            silentListenWindows >=
+            VOICE_PROACTIVE_REPROMPT_AFTER_SILENT_WINDOWS
+          ) {
+            silentListenWindows = 0;
+            await waitForCoachLoop(1_500);
+            shouldRequestCoachTurn = true;
+            continue;
+          }
+
+          await waitForCoachLoop(VOICE_RELISTEN_DELAY_MS);
+          shouldRequestCoachTurn = false;
+          continue;
+        }
+
+        silentListenWindows = 0;
+        setVoiceSessionStatus("thinking");
+
+        const learnerResponse = await requestCoachTurn({
+          audioClip: learnerClip,
+          messages: coachMessagesRef.current.slice(-6),
+        });
+
+        if (cancelled || voiceLoopGenerationRef.current !== generation) {
+          return;
+        }
+
+        if (!learnerResponse) {
+          setVoiceSessionStatus("paused");
+          await waitForCoachLoop(AUTO_COACH_INTERVAL_MS);
+          shouldRequestCoachTurn = true;
+          continue;
+        }
+
+        appendCoachMessage(
+          "user",
+          learnerResponse.learner_goal_summary.trim() || "Voice reply received.",
+        );
+        appendCoachMessage("assistant", learnerResponse.coach_message);
+        setVoiceSessionStatus("speaking");
+        await speakTextAndWait(
+          learnerResponse.coach_message,
+          equityMode.feedbackLanguage,
+          equityMode.coachVoice,
+        );
+
+        if (cancelled || voiceLoopGenerationRef.current !== generation) {
+          return;
+        }
+
+        silentListenWindows = 0;
+        shouldRequestCoachTurn = false;
+      }
+    }
+
+    void runVoiceCoachLoop();
+
+    return () => {
+      cancelled = true;
+      cancelActiveVoiceRecording();
+      stopSpeechPlayback();
+    };
+  }, [
+    appendCoachMessage,
+    authUser,
+    cameraReady,
+    currentStage,
+    equityMode.audioCoaching,
+    equityMode.coachVoice,
+    equityMode.enabled,
+    equityMode.feedbackLanguage,
+    procedure,
+    requestCoachTurn,
+    session,
+    simulationConfirmed,
+    voiceChatEnabled,
+  ]);
+
   if (isAuthLoading || isLoadingProcedure) {
     return (
       <main className="page-shell">
@@ -487,7 +979,7 @@ export default function TrainProcedurePage() {
           <div className="empty-state">
             <h1 className="trainer-title">Loading trainer</h1>
             <p className="review-subtle">
-              Fetching the suturing procedure metadata from the FastAPI service.
+              Loading the procedure and trainer settings from the backend.
             </p>
           </div>
         </div>
@@ -503,7 +995,7 @@ export default function TrainProcedurePage() {
             <h1 className="trainer-title">Trainer unavailable</h1>
             <p className="review-subtle">
               {procedureError ??
-                "We could not initialize the simple interrupted suturing flow."}
+                "We could not initialize the suturing trainer right now."}
             </p>
             <div
               className="review-actions"
@@ -534,7 +1026,7 @@ export default function TrainProcedurePage() {
               {authUser.name} · {authUser.role}
             </span>
             <Link className="button-ghost" href="/">
-              Landing
+              Home
             </Link>
             {authUser.role === "admin" ? (
               <Link className="button-ghost" href="/admin/reviews">
@@ -552,12 +1044,14 @@ export default function TrainProcedurePage() {
 
         <section className="trainer-intro-strip">
           <div>
-            <span className="eyebrow">Live practice console</span>
-            <h1 className="trainer-hero-title">Calibrate the field, capture the step, study the correction.</h1>
+            <span className="eyebrow">Live practice</span>
+            <h1 className="trainer-hero-title">
+              Frame the field and check the current step.
+            </h1>
           </div>
           <p className="body-copy">
-            This workspace is designed like a simulation bay: the camera dominates the left
-            side, while stage logic, feedback, and review readiness stay visible on the right.
+            Keep the practice surface centered, capture one step at a time, and use the
+            coaching panel to decide whether to retry, advance, or review the session.
           </p>
         </section>
 
@@ -588,15 +1082,19 @@ export default function TrainProcedurePage() {
                 <div className="button-row">
                   <button
                     className="button-ghost"
-                    onClick={() =>
-                      setCalibrationMode((current) =>
-                        current === "corners" ? "guide" : "corners",
-                      )
-                    }
+                    onClick={handleToggleCalibrationMode}
                   >
                     {calibrationMode === "corners"
                       ? "Use Centered Guide"
                       : "Use Corner Calibration"}
+                  </button>
+                  <button
+                    className="button-ghost"
+                    disabled={!cameraReady}
+                    onClick={handleShowCameraOverlay}
+                    type="button"
+                  >
+                    Show Overlay for 10s
                   </button>
                 </div>
               </div>
@@ -612,24 +1110,30 @@ export default function TrainProcedurePage() {
                     lowBandwidthMode={
                       equityMode.enabled && equityMode.lowBandwidthMode
                     }
-                    onReadyChange={setCameraReady}
+                    onMicrophoneIssue={setCoachError}
+                    onReadyChange={handleCameraReadyChange}
+                    primeMicrophoneOnStart={voiceChatEnabled}
                   />
-                  <CalibrationOverlay
-                    mode={calibrationMode}
-                    calibration={calibration}
-                    disabled={!cameraReady}
-                    onChange={handleCalibrationChange}
-                  />
-                  <OverlayRenderer
-                    mode={calibrationMode}
-                    calibration={calibration}
-                    targetIds={
-                      feedbackStageId === currentStage.id
-                        ? (feedback?.overlay_target_ids ?? [])
-                        : []
-                    }
-                    targets={procedure.named_overlay_targets}
-                  />
+                  {cameraReady && showCalibrationOverlay ? (
+                    <CalibrationOverlay
+                      mode={calibrationMode}
+                      calibration={calibration}
+                      disabled={!cameraReady}
+                      onChange={handleCalibrationChange}
+                    />
+                  ) : null}
+                  {cameraReady && showFeedbackOverlay ? (
+                    <OverlayRenderer
+                      mode={calibrationMode}
+                      calibration={calibration}
+                      targetIds={
+                        feedbackStageId === currentStage.id
+                          ? (feedback?.overlay_target_ids ?? [])
+                          : []
+                      }
+                      targets={procedure.named_overlay_targets}
+                    />
+                  ) : null}
                 </div>
               </div>
             </article>
@@ -637,11 +1141,10 @@ export default function TrainProcedurePage() {
             <article className="panel" style={{ marginTop: 20 }}>
               <div className="panel-header">
                 <div>
-                  <h2 className="panel-title">Stage controls</h2>
+                  <h2 className="panel-title">Practice setup</h2>
                   <p className="panel-copy">
-                    The trainer now supports an equity mode for lower-resource practice:
-                    multilingual feedback, audio coaching, smaller uploads, older phone
-                    camera constraints, and offline-first practice logging.
+                    Adjust the learner profile, accessibility settings, and simulation
+                    confirmation before you send a frame for analysis.
                   </p>
                 </div>
               </div>
@@ -682,7 +1185,7 @@ export default function TrainProcedurePage() {
                   <strong>Equity mode</strong>
                   <p className="panel-copy">
                     Turn on access-focused settings for multilingual, lower-bandwidth,
-                    low-cost-device practice outside the lab.
+                    and lower-cost-device practice.
                   </p>
                 </div>
               </label>
@@ -691,12 +1194,10 @@ export default function TrainProcedurePage() {
                 <label className="field-label">
                   Feedback language
                   <select
-                    disabled={!equityMode.enabled}
                     onChange={(event) =>
-                      handleEquityModeChange({
-                        ...equityMode,
-                        feedbackLanguage: event.target.value as EquityModeSettings["feedbackLanguage"],
-                      })
+                      handleFeedbackLanguageChange(
+                        event.target.value as EquityModeSettings["feedbackLanguage"],
+                      )
                     }
                     value={equityMode.feedbackLanguage}
                   >
@@ -717,7 +1218,7 @@ export default function TrainProcedurePage() {
                   <p className="panel-copy" style={{ marginTop: 10 }}>
                     {equityMode.enabled
                       ? "Plain-language coaching tuned for lower-resource practice contexts."
-                      : "Default camera, bandwidth, and review settings."}
+                      : "Default camera, bandwidth, and review settings. Choose any option below to turn equity mode on."}
                   </p>
                 </article>
               </div>
@@ -726,19 +1227,15 @@ export default function TrainProcedurePage() {
                 <label className="safety-confirm-card">
                   <input
                     checked={equityMode.audioCoaching}
-                    disabled={!equityMode.enabled}
                     onChange={(event) =>
-                      handleEquityModeChange({
-                        ...equityMode,
-                        audioCoaching: event.target.checked,
-                      })
+                      handleEquityOptionChange("audioCoaching", event.target.checked)
                     }
                     type="checkbox"
                   />
                   <div>
                     <strong>Audio coaching</strong>
                     <p className="panel-copy">
-                      Read the coaching cue aloud on the trainer and review pages.
+                      Speak coach replies and live stage cues aloud so the learner can keep working hands-free.
                     </p>
                   </div>
                 </label>
@@ -746,12 +1243,8 @@ export default function TrainProcedurePage() {
                 <label className="safety-confirm-card">
                   <input
                     checked={equityMode.lowBandwidthMode}
-                    disabled={!equityMode.enabled}
                     onChange={(event) =>
-                      handleEquityModeChange({
-                        ...equityMode,
-                        lowBandwidthMode: event.target.checked,
-                      })
+                      handleEquityOptionChange("lowBandwidthMode", event.target.checked)
                     }
                     type="checkbox"
                   />
@@ -766,12 +1259,8 @@ export default function TrainProcedurePage() {
                 <label className="safety-confirm-card">
                   <input
                     checked={equityMode.cheapPhoneMode}
-                    disabled={!equityMode.enabled}
                     onChange={(event) =>
-                      handleEquityModeChange({
-                        ...equityMode,
-                        cheapPhoneMode: event.target.checked,
-                      })
+                      handleEquityOptionChange("cheapPhoneMode", event.target.checked)
                     }
                     type="checkbox"
                   />
@@ -786,12 +1275,11 @@ export default function TrainProcedurePage() {
                 <label className="safety-confirm-card">
                   <input
                     checked={equityMode.offlinePracticeLogging}
-                    disabled={!equityMode.enabled}
                     onChange={(event) =>
-                      handleEquityModeChange({
-                        ...equityMode,
-                        offlinePracticeLogging: event.target.checked,
-                      })
+                      handleEquityOptionChange(
+                        "offlinePracticeLogging",
+                        event.target.checked,
+                      )
                     }
                     type="checkbox"
                   />
@@ -804,14 +1292,18 @@ export default function TrainProcedurePage() {
                 </label>
               </div>
 
-              <label className="field-label" style={{ marginTop: 14 }}>
-                Optional student question
-                <textarea
-                  value={studentQuestion}
-                  onChange={(event) => setStudentQuestion(event.target.value)}
-                  placeholder="Example: Am I holding the needle too close to the tip?"
-                />
-              </label>
+              <VoiceCoachPanel
+                cameraReady={cameraReady}
+                coachTurn={coachTurn}
+                coachVoice={equityMode.coachVoice}
+                error={coachError}
+                feedbackLanguage={equityMode.feedbackLanguage}
+                messages={coachMessages}
+                onCoachVoiceChange={handleCoachVoiceChange}
+                simulationConfirmed={simulationConfirmed}
+                voiceChatEnabled={voiceChatEnabled}
+                voiceSessionStatus={voiceSessionStatus}
+              />
 
               <label className="safety-confirm-card" style={{ marginTop: 18 }}>
                 <input
@@ -854,10 +1346,10 @@ export default function TrainProcedurePage() {
               </div>
 
               <p className="fine-print" style={{ marginTop: 16 }}>
-                If four-corner calibration feels unstable, switch to the centered guide. The
-                overlay renderer, safety gate, and AI coaching flow work in both modes.
-                Equity mode settings are saved with the local session so access preferences
-                carry into review.
+                Camera overlays now auto-hide after 10 seconds. Use{" "}
+                <em>Show Overlay for 10s</em> whenever you want to see calibration or
+                feedback targets again. Equity settings are saved with the session and
+                carried into review.
               </p>
             </article>
           </section>
@@ -876,6 +1368,7 @@ export default function TrainProcedurePage() {
               <FeedbackCard
                 attemptCount={currentStageAttempts}
                 audioEnabled={equityMode.enabled && equityMode.audioCoaching}
+                coachVoice={equityMode.coachVoice}
                 error={analyzeError}
                 feedbackLanguage={equityMode.feedbackLanguage}
                 isAnalyzing={isAnalyzing}

@@ -353,7 +353,7 @@ export default function ReviewPage() {
           <div className="empty-state">
             <h1 className="review-title">Loading review</h1>
             <p className="review-subtle">
-              Reconstructing the local training session from browser storage.
+              Loading the saved training session from browser storage.
             </p>
           </div>
         </div>
@@ -368,8 +368,7 @@ export default function ReviewPage() {
           <div className="empty-state">
             <h1 className="review-title">No local session found</h1>
             <p className="review-subtle">
-              This review page depends on the browser session record created during
-              training.
+              Start a training session first so the review page has recorded attempts to load.
             </p>
             <div
               className="review-actions"
@@ -400,7 +399,7 @@ export default function ReviewPage() {
               {authUser.name} · {authUser.role}
             </span>
             <Link className="button-ghost" href="/">
-              Landing
+              Home
             </Link>
             {authUser.role === "admin" ? (
               <Link className="button-ghost" href="/admin/reviews">
@@ -418,12 +417,14 @@ export default function ReviewPage() {
 
         <section className="trainer-intro-strip review-intro-strip">
           <div>
-            <span className="eyebrow">Session archive</span>
-            <h1 className="trainer-hero-title">Turn one practice run into a usable study record.</h1>
+            <span className="eyebrow">Session review</span>
+            <h1 className="trainer-hero-title">
+              Review what happened and plan the next reps.
+            </h1>
           </div>
           <p className="body-copy">
-            The review view keeps the attempt timeline, AI debrief, and quiz in one place
-            so the session feels more like a reusable notebook than a disposable result page.
+            Keep the attempt timeline, AI summary, and drill plan in one place so you can
+            quickly decide what to repeat in the next practice block.
           </p>
         </section>
 

@@ -7,6 +7,7 @@ AI Clinical Skills Coach is a simulation-only trainer for practicing a simple in
 - One procedure: `simple-interrupted-suture`
 - One core flow: landing -> train -> analyze -> review
 - Browser-local session storage
+- SQLite-backed account persistence
 - Deterministic scoring in Python
 - AI-backed frame analysis and session debriefing
 - Confidence-aware grading with explicit `not graded - retake required` outcomes
@@ -24,6 +25,7 @@ AI Clinical Skills Coach is a simulation-only trainer for practicing a simple in
 
 - `docs/how-to-run.md`: OS-specific quickstart for Windows, Ubuntu, and macOS users
 - `docs/local-setup.md`: full setup, run, verification, and troubleshooting guide
+- `docs/team-setup.md`: collaborator setup, shared-backend patterns, and secret-handling guidance for an open repo
 - `docs/api-reference.md`: backend contract, request and response shapes, and error behavior
 - `docs/safer-skills-roadmap.md`: recommended next modules with a safer-skills-first expansion order
 - `backend/README.md`: backend-specific setup, environment, and testing notes
@@ -162,7 +164,7 @@ pytest
 
 - Simulation-only; not for real clinical care or diagnosis
 - One procedure only in the current build
-- Login is browser-local and demo-friendly, not production auth
-- No database-backed persistence
+- Login is local/demo-friendly and not production auth
+- Training sessions still live in browser storage
 - AI output quality still depends on the model and image quality
 - Review history is tied to the browser profile that created the session

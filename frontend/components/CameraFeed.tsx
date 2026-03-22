@@ -10,6 +10,11 @@ import {
   useState,
 } from "react";
 
+import {
+  primeSpeechPlayback,
+  primeVoiceRecordingPermission,
+} from "@/lib/audio";
+
 type PermissionState = "idle" | "requesting" | "granted" | "denied" | "error";
 
 export type CapturedFrame = {
@@ -30,6 +35,8 @@ type CameraFeedProps = {
   frozenFrameUrl: string | null;
   lowBandwidthMode?: boolean;
   cheapPhoneMode?: boolean;
+  primeMicrophoneOnStart?: boolean;
+  onMicrophoneIssue?: (message: string | null) => void;
   onReadyChange?: (ready: boolean) => void;
 };
 
@@ -39,6 +46,8 @@ export const CameraFeed = forwardRef<CameraFeedHandle, CameraFeedProps>(
       frozenFrameUrl,
       lowBandwidthMode = false,
       cheapPhoneMode = false,
+      primeMicrophoneOnStart = false,
+      onMicrophoneIssue,
       onReadyChange,
     },
     ref,
@@ -46,8 +55,13 @@ export const CameraFeed = forwardRef<CameraFeedHandle, CameraFeedProps>(
     const videoRef = useRef<HTMLVideoElement>(null);
     const canvasRef = useRef<HTMLCanvasElement>(null);
     const streamRef = useRef<MediaStream | null>(null);
+    const onReadyChangeRef = useRef(onReadyChange);
     const [permissionState, setPermissionState] = useState<PermissionState>("idle");
     const [errorMessage, setErrorMessage] = useState<string | null>(null);
+
+    useEffect(() => {
+      onReadyChangeRef.current = onReadyChange;
+    }, [onReadyChange]);
 
     const stopCamera = useCallback(() => {
       streamRef.current?.getTracks().forEach((track) => track.stop());
@@ -60,17 +74,18 @@ export const CameraFeed = forwardRef<CameraFeedHandle, CameraFeedProps>(
       setPermissionState((current) =>
         current === "granted" ? "idle" : current,
       );
-      onReadyChange?.(false);
-    }, [onReadyChange]);
+      onReadyChangeRef.current?.(false);
+    }, []);
 
     const startCamera = useCallback(async () => {
       if (!navigator.mediaDevices?.getUserMedia) {
         setPermissionState("error");
         setErrorMessage("This browser does not support camera access.");
-        onReadyChange?.(false);
+        onReadyChangeRef.current?.(false);
         return;
       }
 
+      primeSpeechPlayback();
       setPermissionState("requesting");
       setErrorMessage(null);
 
@@ -91,8 +106,21 @@ export const CameraFeed = forwardRef<CameraFeedHandle, CameraFeedProps>(
           await videoRef.current.play();
         }
 
+        if (primeMicrophoneOnStart) {
+          try {
+            await primeVoiceRecordingPermission();
+            onMicrophoneIssue?.(null);
+          } catch (error) {
+            onMicrophoneIssue?.(
+              error instanceof Error
+                ? error.message
+                : "Microphone access is required for hands-free voice chat.",
+            );
+          }
+        }
+
         setPermissionState("granted");
-        onReadyChange?.(true);
+        onReadyChangeRef.current?.(true);
       } catch (error) {
         setPermissionState("denied");
         setErrorMessage(
@@ -100,9 +128,9 @@ export const CameraFeed = forwardRef<CameraFeedHandle, CameraFeedProps>(
             ? error.message
             : "Camera permission was denied.",
         );
-        onReadyChange?.(false);
+        onReadyChangeRef.current?.(false);
       }
-    }, [cheapPhoneMode, lowBandwidthMode, onReadyChange]);
+    }, [cheapPhoneMode, lowBandwidthMode, onMicrophoneIssue, primeMicrophoneOnStart]);
 
     const captureFrame = useCallback(async (): Promise<CapturedFrame | null> => {
       const video = videoRef.current;
@@ -199,7 +227,7 @@ export const CameraFeed = forwardRef<CameraFeedHandle, CameraFeedProps>(
               <h3>Start the trainer camera</h3>
               <p>
                 Camera access only begins after you click. Frame the orange, banana, or
-                foam pad so the mock overlay has a stable practice field.
+                foam pad so the overlay targets sit on a clear practice field.
               </p>
               <button className="button-primary" onClick={() => void startCamera()}>
                 {permissionState === "denied" ? "Retry Camera Access" : "Enable Camera"}

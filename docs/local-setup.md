@@ -1,6 +1,6 @@
 # Local Setup Guide
 
-This guide walks through the full local setup for AI Clinical Skills Coach, including OpenAI-compatible and Anthropic-style AI backends, the local account flow, and the new equity-mode features.
+This guide walks through the full local setup for AI Clinical Skills Coach, including OpenAI-compatible and Anthropic-style AI backends, the workspace account flow, and the new equity-mode features.
 
 If you want the shortest OS-specific quickstart first, use `docs/how-to-run.md`.
 
@@ -69,7 +69,23 @@ Do not use:
 
 This guide assumes vLLM stays on port `8000` and the FastAPI backend runs on port `8001`.
 
-### Option B: Anthropic-Style Endpoint
+### Option B: Hosted OpenAI-Compatible Endpoint with Z.AI
+
+Use this when you want a shared hosted multimodal endpoint instead of running a local model server on one laptop.
+
+Example base URL:
+
+```text
+https://api.z.ai/api/paas/v4
+```
+
+Suggested model choice:
+
+- `glm-4.6v-flash`: free hosted multimodal model for image analysis, typed coach turns, and debrief generation
+
+If you use this option, you can skip the local vLLM terminal entirely.
+
+### Option C: Anthropic-Style Endpoint
 
 Use an Anthropic-compatible `/messages` endpoint if you want to run against Anthropic directly or through a compatible proxy.
 
@@ -117,6 +133,7 @@ AI_API_BASE_URL=http://localhost:8000/v1
 AI_API_KEY=EMPTY
 AI_ANALYSIS_MODEL=chaitnya26/Qwen2.5-Omni-3B-Fork
 AI_DEBRIEF_MODEL=chaitnya26/Qwen2.5-Omni-3B-Fork
+AI_COACH_MODEL=chaitnya26/Qwen2.5-Omni-3B-Fork
 AI_TIMEOUT_SECONDS=60
 AI_ANALYSIS_MAX_TOKENS=1400
 AI_DEBRIEF_MAX_TOKENS=1200
@@ -125,6 +142,37 @@ HUMAN_REVIEW_CONFIDENCE_THRESHOLD=0.78
 GRADING_CONFIDENCE_THRESHOLD=0.80
 ```
 
+#### Hosted Z.AI
+
+```env
+FRONTEND_ORIGIN=http://localhost:3000
+SIMULATION_ONLY=true
+AI_PROVIDER=auto
+AI_API_BASE_URL=https://api.z.ai/api/paas/v4
+AI_API_KEY=SET_IN_ENV_MANAGER
+AI_ANALYSIS_MODEL=glm-4.6v-flash
+AI_DEBRIEF_MODEL=glm-4.6v-flash
+AI_COACH_MODEL=glm-4.6v-flash
+AI_TIMEOUT_SECONDS=60
+AI_ANALYSIS_MAX_TOKENS=1400
+AI_DEBRIEF_MAX_TOKENS=1200
+AI_SAFETY_MAX_TOKENS=600
+HUMAN_REVIEW_CONFIDENCE_THRESHOLD=0.78
+GRADING_CONFIDENCE_THRESHOLD=0.80
+```
+
+Use this when you want a shared hosted vision model and do not want to run a local model server.
+
+Recommended for an open repo:
+
+```bash
+micromamba env config vars set -n hackathon AI_API_KEY='your_real_key_here'
+micromamba deactivate
+micromamba activate hackathon
+```
+
+Keep the checked-out `backend/.env` file on a placeholder such as `AI_API_KEY=SET_IN_ENV_MANAGER`.
+
 #### Anthropic-Style
 
 ```env
@@ -132,9 +180,10 @@ FRONTEND_ORIGIN=http://localhost:3000
 SIMULATION_ONLY=true
 AI_PROVIDER=auto
 AI_API_BASE_URL=https://api.anthropic.com/v1/messages
-AI_API_KEY=your_api_key_here
+AI_API_KEY=SET_IN_ENV_MANAGER
 AI_ANALYSIS_MODEL=your_vision_capable_model
 AI_DEBRIEF_MODEL=your_text_or_multimodal_model
+AI_COACH_MODEL=your_text_or_multimodal_model
 AI_TIMEOUT_SECONDS=60
 AI_ANALYSIS_MAX_TOKENS=1400
 AI_DEBRIEF_MAX_TOKENS=1200
@@ -206,9 +255,9 @@ http://localhost:3000
 
 You should see the landing page for AI Clinical Skills Coach.
 
-## 7. Create a Local Account
+## 7. Create a Workspace Account
 
-Before entering the trainer or admin queue, open the local account flow:
+Before entering the trainer or admin queue, open the workspace account flow:
 
 ```text
 http://localhost:3000/login
@@ -218,9 +267,11 @@ On first use:
 
 - choose `Create Account`
 - enter a display name, username, password, and role
-- submit the form to create a browser-local demo account
+- submit the form to create a SQLite-backed workspace account
 
 Students should use the `student` role for the trainer and review flow. Faculty or senior reviewers should use the `admin` role for the validation queue.
+
+Account records are stored in backend SQLite. Training sessions are still stored in the browser that created them.
 
 ## 8. First-Run Verification
 
@@ -464,7 +515,9 @@ Install a current Node.js release, then rerun `npm install` in `frontend/`.
 ## 14. Current Limitations
 
 - one supported procedure
-- browser-local persistence only
+- browser-local session persistence, with SQLite-backed account persistence
 - login is local-only and intended for demo use
 - simulation-only educational framing
 - live analysis quality depends on image quality and model choice
+
+For teammate-specific setup patterns and shared-backend guidance, use `docs/team-setup.md`.

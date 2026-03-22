@@ -1,6 +1,11 @@
 import { createDefaultCalibration } from "@/lib/geometry";
+import {
+  createPersistedAuthAccount,
+  previewPersistedAuthAccount,
+  signInPersistedAuthAccount,
+  type PersistedAuthAccount,
+} from "@/lib/api";
 import type {
-  AuthAccount,
   AuthUser,
   CreateAuthAccountInput,
   DebriefResponse,
@@ -14,7 +19,6 @@ import type {
 
 const SESSIONS_KEY = "ai-clinical-skills-coach:sessions";
 const AUTH_USER_KEY = "ai-clinical-skills-coach:auth-user";
-const AUTH_ACCOUNTS_KEY = "ai-clinical-skills-coach:auth-accounts";
 
 function activeSessionKey(procedureId: string) {
   return `ai-clinical-skills-coach:active:${procedureId}`;
@@ -25,6 +29,7 @@ export function createDefaultEquityMode(): EquityModeSettings {
     enabled: false,
     feedbackLanguage: "en",
     audioCoaching: false,
+    coachVoice: "guide_male",
     lowBandwidthMode: false,
     cheapPhoneMode: false,
     offlinePracticeLogging: true,
@@ -108,28 +113,6 @@ function normalizeSessionRecord(
   };
 }
 
-function readAuthAccounts(): AuthAccount[] {
-  if (typeof window === "undefined") {
-    return [];
-  }
-
-  const raw = window.localStorage.getItem(AUTH_ACCOUNTS_KEY);
-  if (!raw) {
-    return [];
-  }
-
-  try {
-    const data = JSON.parse(raw) as AuthAccount[];
-    return Array.isArray(data) ? data : [];
-  } catch {
-    return [];
-  }
-}
-
-function writeAuthAccounts(accounts: AuthAccount[]) {
-  window.localStorage.setItem(AUTH_ACCOUNTS_KEY, JSON.stringify(accounts));
-}
-
 function normalizeUsername(username: string): string {
   return username.trim().toLowerCase();
 }
@@ -154,15 +137,7 @@ function validatePassword(password: string): string {
   return password;
 }
 
-async function hashPassword(password: string): Promise<string> {
-  const encoder = new TextEncoder();
-  const buffer = await crypto.subtle.digest("SHA-256", encoder.encode(password));
-  return Array.from(new Uint8Array(buffer), (value) =>
-    value.toString(16).padStart(2, "0"),
-  ).join("");
-}
-
-function toAuthUser(account: AuthAccount): AuthUser {
+function toAuthUser(account: PersistedAuthAccount): AuthUser {
   return {
     id: crypto.randomUUID(),
     accountId: account.id,
@@ -235,53 +210,53 @@ export async function createAuthAccount(
 
   const username = validateUsername(input.username);
   const password = validatePassword(input.password);
-  const accounts = readAuthAccounts();
-
-  if (accounts.some((account) => account.username === username)) {
-    throw new Error("That username is already registered. Sign in instead.");
-  }
-
-  const account: AuthAccount = {
-    id: crypto.randomUUID(),
+  const account = await createPersistedAuthAccount({
     name,
     username,
-    passwordHash: await hashPassword(password),
+    password,
     role: input.role,
-    createdAt: new Date().toISOString(),
-  };
-
-  writeAuthAccounts([...accounts, account]);
+  });
   return persistAuthUser(toAuthUser(account));
 }
 
 export async function signInAuthUser(input: LoginAuthInput): Promise<AuthUser> {
   ensureBrowserStorage();
 
-  const username = validateUsername(input.username);
+  const identifier = input.username.trim();
+  if (identifier.length < 3) {
+    throw new Error("Enter the username or display name for this workspace account.");
+  }
+
   const password = validatePassword(input.password);
-  const accounts = readAuthAccounts();
-
-  if (accounts.length === 0) {
-    throw new Error("No local accounts exist yet. Create an account first.");
-  }
-
-  const account = accounts.find((entry) => entry.username === username);
-  if (!account) {
-    throw new Error("No account was found for that username.");
-  }
-
-  const passwordHash = await hashPassword(password);
-  if (account.passwordHash !== passwordHash) {
-    throw new Error("Incorrect password. Try again.");
-  }
-
-  if (input.role && account.role !== input.role) {
-    throw new Error(
-      `This account is registered as ${account.role}. Switch roles or use a different account.`,
-    );
-  }
-
+  const account = await signInPersistedAuthAccount({
+    identifier,
+    password,
+    role: input.role,
+  });
   return persistAuthUser(toAuthUser(account));
+}
+
+export async function previewAuthAccount(
+  identifier: string,
+): Promise<{ name: string; role: AuthUser["role"]; username: string } | null> {
+  ensureBrowserStorage();
+
+  const trimmedIdentifier = identifier.trim();
+  if (trimmedIdentifier.length < 3) {
+    throw new Error("Enter the username or display name for this workspace account.");
+  }
+
+  const account = await previewPersistedAuthAccount(trimmedIdentifier);
+
+  if (!account) {
+    return null;
+  }
+
+  return {
+    name: account.name,
+    role: account.role,
+    username: account.username,
+  };
 }
 
 export function getAuthUser(): AuthUser | null {

@@ -19,34 +19,15 @@ class OpenAICompatibleProvider:
         self._timeout_seconds = timeout_seconds
 
     def send_json_message(self, request: JSONMessageRequest) -> dict[str, Any]:
-        payload = {
-            "model": request.model,
-            "messages": [
-                {"role": "system", "content": request.system_prompt},
-                {"role": "user", "content": _to_openai_content(request.user_content)},
-            ],
-            "max_tokens": request.max_tokens,
-            "temperature": 0,
-            "response_format": {
-                "type": "json_schema",
-                "json_schema": {
-                    "name": "coach_response",
-                    "schema": request.output_schema,
-                },
-            },
-        }
-
         headers = {
             "Authorization": f"Bearer {self._api_key}",
             "Content-Type": "application/json",
         }
 
         try:
-            response = httpx.post(
-                _chat_completions_url(self._base_url),
+            response = self._post_json_message(
                 headers=headers,
-                json=payload,
-                timeout=self._timeout_seconds,
+                payload=_build_payload(request=request, response_format_type="json_schema"),
             )
         except httpx.HTTPError as exc:
             raise AIRequestError(
@@ -54,7 +35,22 @@ class OpenAICompatibleProvider:
             ) from exc
 
         if response.status_code >= 400:
-            raise AIRequestError(_extract_error_message(response))
+            if _should_retry_with_json_object(response):
+                try:
+                    response = self._post_json_message(
+                        headers=headers,
+                        payload=_build_payload(
+                            request=request,
+                            response_format_type="json_object",
+                        ),
+                    )
+                except httpx.HTTPError as exc:
+                    raise AIRequestError(
+                        "The OpenAI-compatible request could not reach the configured model server."
+                    ) from exc
+
+            if response.status_code >= 400:
+                raise AIRequestError(_extract_error_message(response))
 
         try:
             response_data = response.json()
@@ -76,6 +72,73 @@ class OpenAICompatibleProvider:
             raise AIResponseError("The model server returned a JSON value that was not an object.")
 
         return parsed_payload
+
+    def _post_json_message(
+        self,
+        *,
+        headers: dict[str, str],
+        payload: dict[str, Any],
+    ) -> httpx.Response:
+        return httpx.post(
+            _chat_completions_url(self._base_url),
+            headers=headers,
+            json=payload,
+            timeout=self._timeout_seconds,
+        )
+
+
+def _build_payload(
+    *,
+    request: JSONMessageRequest,
+    response_format_type: str,
+) -> dict[str, Any]:
+    system_prompt = request.system_prompt
+    response_format: dict[str, Any] = {"type": response_format_type}
+
+    if response_format_type == "json_schema":
+        response_format["json_schema"] = {
+            "name": "coach_response",
+            "schema": request.output_schema,
+        }
+    elif response_format_type == "json_object":
+        system_prompt = _system_prompt_with_embedded_schema(
+            request.system_prompt,
+            request.output_schema,
+        )
+
+    return {
+        "model": request.model,
+        "messages": [
+            {"role": "system", "content": system_prompt},
+            {"role": "user", "content": _to_openai_content(request.user_content)},
+        ],
+        "max_tokens": request.max_tokens,
+        "temperature": 0,
+        "response_format": response_format,
+    }
+
+
+def _system_prompt_with_embedded_schema(
+    system_prompt: str,
+    output_schema: dict[str, Any],
+) -> str:
+    schema_json = json.dumps(output_schema, indent=2, sort_keys=True)
+    return (
+        f"{system_prompt}\n\n"
+        "Return a valid JSON object that matches this schema exactly. "
+        "Do not wrap the JSON in markdown or add any extra commentary.\n"
+        f"{schema_json}"
+    )
+
+
+def _should_retry_with_json_object(response: httpx.Response) -> bool:
+    if response.status_code not in {400, 404, 422}:
+        return False
+
+    error_message = _extract_error_message(response).lower()
+    return "json_schema" in error_message or (
+        "response_format" in error_message and "schema" in error_message
+    )
 
 
 def _chat_completions_url(base_url: str) -> str:
@@ -112,6 +175,32 @@ def _to_openai_content(user_content: list[dict[str, Any]]) -> list[dict[str, Any
                     "type": "image_url",
                     "image_url": {
                         "url": f"data:{media_type};base64,{data}",
+                    },
+                }
+            )
+            continue
+
+        if item_type == "audio":
+            source = item.get("source")
+            if not isinstance(source, dict):
+                raise AIRequestError("The audio payload is missing its source block.")
+            data = source.get("data")
+            audio_format = source.get("format")
+            if not isinstance(data, str) or not isinstance(audio_format, str):
+                raise AIRequestError(
+                    "The audio payload must include base64 data and a format."
+                )
+            normalized_format = audio_format.strip().lower()
+            if normalized_format not in {"wav", "mp3"}:
+                raise AIRequestError(
+                    "The audio payload format must be wav or mp3 for the OpenAI-compatible provider."
+                )
+            converted.append(
+                {
+                    "type": "input_audio",
+                    "input_audio": {
+                        "data": data,
+                        "format": normalized_format,
                     },
                 }
             )
@@ -168,4 +257,3 @@ def _extract_message_text(response_data: dict[str, Any]) -> str:
             return joined
 
     raise AIResponseError("The model server returned an empty response body.")
-

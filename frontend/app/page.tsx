@@ -1,5 +1,35 @@
 import Link from "next/link";
 
+import { HomeSystemStatus } from "@/components/HomeSystemStatus";
+
+const workflowCards = [
+  {
+    index: "01",
+    title: "Load the trainer from the backend",
+    body:
+      "The landing page now checks FastAPI health and loads the suturing procedure before you start, so the UI reflects real system state instead of placeholder copy.",
+  },
+  {
+    index: "02",
+    title: "Capture one frame for the current stage",
+    body:
+      "The training view stays focused on the active stage, camera framing, overlay targets, and the next coaching decision.",
+  },
+  {
+    index: "03",
+    title: "Review the saved session",
+    body:
+      "Every analyzed attempt is stored locally and fed into the review page for a debrief, drill plan, quiz, and timeline of corrections.",
+  },
+];
+
+const setupChecklist = [
+  "A webcam or phone camera aimed at an orange, banana, foam pad, or bench model",
+  "The FastAPI backend running with the suturing procedure and review routes",
+  "The model server reachable by the backend for frame analysis and debrief generation",
+  "A student or admin sign-in to enter training or the faculty review queue",
+];
+
 export default function Home() {
   return (
     <main className="page-shell landing-shell">
@@ -9,25 +39,25 @@ export default function Home() {
             <span className="brand-mark">AC</span>
             <span>AI Clinical Skills Coach</span>
           </div>
-          <span className="pill">Simulation bay: suturing edition</span>
+          <span className="pill">Simple interrupted suture</span>
         </header>
 
         <section className="hero">
           <div className="hero-grid">
-            <article className="hero-card hero-copy">
-              <span className="eyebrow">Studio mode</span>
-              <h1>Turn a kitchen-counter practice setup into a cinematic training bay.</h1>
+            <article className="hero-card hero-copy hero-copy-compact">
+              <span className="eyebrow">Guided practice</span>
+              <h1>Practice one suturing step at a time with live AI coaching.</h1>
               <p>
-                A webcam, a foam pad or orange, and one sharply scoped procedure become a
-                guided suturing loop with overlays, AI feedback, and a review deck built
-                for repetition instead of clutter.
+                This trainer is built around one real loop: load the suturing rubric from
+                the backend, capture a single frame, get stage-specific feedback, and save
+                the session for review.
               </p>
               <div className="button-row">
                 <Link
                   className="button-primary"
                   href="/login?role=student&next=/train/simple-interrupted-suture"
                 >
-                  Launch Suturing Bay
+                  Start Training
                 </Link>
                 <Link
                   className="button-secondary"
@@ -36,148 +66,78 @@ export default function Home() {
                   Open Admin Queue
                 </Link>
                 <Link className="button-secondary" href="/library">
-                  Open Learning Library
+                  Open Library
                 </Link>
                 <a className="button-secondary" href="#how-it-works">
-                  Explore the System
+                  How It Works
                 </a>
               </div>
               <div className="signal-grid">
                 <article className="signal-card">
-                  <span>Focus</span>
-                  <strong>1 procedure</strong>
+                  <span>Procedure</span>
+                  <strong>Suturing trainer</strong>
                 </article>
                 <article className="signal-card">
                   <span>Input</span>
-                  <strong>Camera + overlays</strong>
+                  <strong>Camera + single frame</strong>
                 </article>
                 <article className="signal-card">
-                  <span>Output</span>
-                  <strong>AI debrief + quiz</strong>
+                  <span>Feedback</span>
+                  <strong>Live stage coaching</strong>
                 </article>
                 <article className="signal-card">
-                  <span>Access</span>
-                  <strong>Equity mode</strong>
+                  <span>Review</span>
+                  <strong>Debrief + drill plan</strong>
                 </article>
               </div>
             </article>
 
-            <aside className="hero-card hero-aside">
-              <div className="hero-diagram">
-                <div className="diagram-chip">capture</div>
-                <div className="diagram-chip">calibrate</div>
-                <div className="diagram-chip">analyze</div>
-                <div className="diagram-chip">retry</div>
-                <div className="diagram-chip">review</div>
-              </div>
-              <div className="stat-card accent-card">
-                <strong>Built like a focused control room</strong>
-                <p className="panel-copy">
-                  The interface treats each practice attempt like a logged simulation
-                  event, not a generic chat prompt. Camera framing, stage progress, and
-                  review all stay visible at once.
-                </p>
-              </div>
-              <div className="stat-rail">
-                <div className="stat-card compact-card">
-                  <span className="metric-kicker">Frontend</span>
-                  <strong>Next.js</strong>
-                  <p className="panel-copy">Camera, calibration, overlays, review cache.</p>
-                </div>
-                <div className="stat-card compact-card">
-                  <span className="metric-kicker">Backend</span>
-                  <strong>FastAPI</strong>
-                  <p className="panel-copy">Rubrics, scoring, analysis, debrief generation.</p>
-                </div>
-              </div>
-            </aside>
+            <HomeSystemStatus />
           </div>
 
           <section className="marquee-band" aria-label="Product framing">
-            <span>simulation-only</span>
-            <span>simple interrupted suture</span>
-            <span>camera-led coaching</span>
-            <span>overlay-targeted guidance</span>
-            <span>session memory</span>
-            <span>review-first learning</span>
+            <span>backend health</span>
+            <span>procedure metadata</span>
+            <span>camera-led capture</span>
+            <span>overlay guidance</span>
+            <span>session review</span>
+            <span>simulation only</span>
           </section>
 
-          <div className="feature-grid feature-grid-four" id="how-it-works">
-            <article className="feature-card">
-              <span className="feature-index">01</span>
-              <h2>One believable procedure, treated with depth</h2>
-              <p>
-                Every screen is tuned around simple interrupted suturing so stage labels,
-                scoring, targets, and review language all stay specific and teachable.
-              </p>
-            </article>
-            <article className="feature-card">
-              <span className="feature-index">02</span>
-              <h2>A trainer view that feels instrumented</h2>
-              <p>
-                The camera sits at the center, while calibration, stage controls, and live
-                coaching readouts frame the attempt like a deliberate practice console.
-              </p>
-            </article>
-            <article className="feature-card">
-              <span className="feature-index">03</span>
-              <h2>Review that reads like a study artifact</h2>
-              <p>
-                The session timeline, debrief, and quiz are designed to be revisited after
-                practice, not just glanced at once before closing the tab.
-              </p>
-            </article>
-            <article className="feature-card">
-              <span className="feature-index">04</span>
-              <h2>Access settings built for outside-the-lab practice</h2>
-              <p>
-                Equity mode now adds multilingual feedback, audio coaching, low-bandwidth
-                capture, cheap-phone compatibility, and offline-first practice logging.
-              </p>
-            </article>
+          <div className="feature-grid" id="how-it-works">
+            {workflowCards.map((card) => (
+              <article className="feature-card" key={card.index}>
+                <span className="feature-index">{card.index}</span>
+                <h2>{card.title}</h2>
+                <p>{card.body}</p>
+              </article>
+            ))}
           </div>
 
           <section className="landing-bottom-grid">
-            <article className="feature-card atmosphere-card">
-              <span className="feature-index">Practice mood</span>
-              <h2>Calm, technical, and visibly intentional</h2>
-              <p>
-                Instead of default dashboard styling, the interface leans into warm lab
-                lighting, technical labels, and strong spatial cues so the app feels like
-                a training environment with purpose.
-              </p>
+            <article className="feature-card">
+              <span className="feature-index">Before you start</span>
+              <h2>What you need on the table</h2>
+              <ul className="checklist-list" style={{ marginTop: 18 }}>
+                {setupChecklist.map((item) => (
+                  <li key={item}>{item}</li>
+                ))}
+              </ul>
             </article>
-            <article className="feature-card atmosphere-card">
-              <span className="feature-index">Safety frame</span>
-              <h2>Always simulation-only</h2>
+            <article className="feature-card">
+              <span className="feature-index">Why this UI changed</span>
+              <h2>Less pitch deck, more working trainer</h2>
               <p>
-                The product is explicitly designed for practice on oranges, bananas, or
-                foam pads. It supports deliberate repetition and instruction, not real
-                patient care or clinical decision-making.
-              </p>
-            </article>
-            <article className="feature-card atmosphere-card">
-              <span className="feature-index">Open library</span>
-              <h2>Share rubrics and benchmark starter assets</h2>
-              <p>
-                The repo now includes a public rubric library, a benchmark manifest starter,
-                and a safer-skills roadmap so the social benefit extends beyond this single
-                app build.
-              </p>
-            </article>
-            <article className="feature-card atmosphere-card">
-              <span className="feature-index">Safer roadmap</span>
-              <h2>Expand into broader, lower-risk skills first</h2>
-              <p>
-                Future modules now prioritize sterile technique, wound dressing, PPE,
-                hand hygiene, and basic instrument handling ahead of flashier procedures.
+                The landing page now reflects the real backend workflow, the trainer focuses
+                on the active step, and the review page centers the recorded practice data
+                instead of implementation notes.
               </p>
             </article>
           </section>
 
           <p className="fine-print landing-note">
-            Built for simulated deliberate practice only. This product does not replace
-            instructors, real-patient training, or clinical judgment.
+            Built for simulated deliberate practice only. It does not replace instructors,
+            real-patient training, or clinical judgment.
           </p>
         </section>
       </div>

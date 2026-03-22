@@ -43,6 +43,14 @@ class Settings(BaseSettings):
             "ANTHROPIC_DEBRIEF_MODEL",
         ),
     )
+    ai_coach_model: str = Field(
+        default="chaitnya26/Qwen2.5-Omni-3B-Fork",
+        validation_alias=AliasChoices(
+            "AI_COACH_MODEL",
+            "OPENAI_COACH_MODEL",
+            "ANTHROPIC_COACH_MODEL",
+        ),
+    )
     ai_timeout_seconds: float = Field(
         default=60.0,
         validation_alias=AliasChoices(
@@ -65,6 +73,14 @@ class Settings(BaseSettings):
             "AI_DEBRIEF_MAX_TOKENS",
             "OPENAI_DEBRIEF_MAX_TOKENS",
             "ANTHROPIC_DEBRIEF_MAX_TOKENS",
+        ),
+    )
+    ai_coach_max_tokens: int = Field(
+        default=900,
+        validation_alias=AliasChoices(
+            "AI_COACH_MAX_TOKENS",
+            "OPENAI_COACH_MAX_TOKENS",
+            "ANTHROPIC_COACH_MAX_TOKENS",
         ),
     )
     ai_safety_max_tokens: int = Field(

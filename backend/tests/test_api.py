@@ -1,11 +1,18 @@
+import hashlib
+import sqlite3
+
 from fastapi.testclient import TestClient
 
 from app.api.routes import analyze as analyze_route
+from app.api.routes import coach as coach_route
 from app.api.routes import debrief as debrief_route
 from app.api.routes import review_cases as review_cases_route
+from app.api.routes import tts as tts_route
 from app.main import app
 from app.schemas.analyze import AnalyzeFrameResponse, Issue, SafetyGateResult
+from app.schemas.coach import CoachChatResponse
 from app.schemas.debrief import AdaptiveDrill, DebriefResponse, ErrorFingerprintItem, QuizQuestion
+from app.services import auth_service
 from app.services.ai_client import AIConfigurationError
 from app.services import review_queue_service
 
@@ -17,6 +24,142 @@ def test_health_route() -> None:
 
     assert response.status_code == 200
     assert response.json() == {"status": "ok", "simulation_only": True}
+
+
+def test_auth_routes_create_preview_and_sign_in_with_sqlite(tmp_path, monkeypatch) -> None:
+    monkeypatch.setattr(auth_service, "AUTH_DB_PATH", tmp_path / "auth.db")
+
+    create_response = client.post(
+        "/api/v1/auth/accounts",
+        json={
+            "name": "Student One",
+            "username": "Student01",
+            "password": "supersecure",
+            "role": "student",
+        },
+    )
+
+    assert create_response.status_code == 201
+    created = create_response.json()
+    assert created["username"] == "student01"
+    assert created["name"] == "Student One"
+    assert created["role"] == "student"
+
+    preview_response = client.get(
+        "/api/v1/auth/accounts/preview",
+        params={"identifier": "student01"},
+    )
+
+    assert preview_response.status_code == 200
+    assert preview_response.json()["name"] == "Student One"
+
+    sign_in_response = client.post(
+        "/api/v1/auth/sign-in",
+        json={
+            "identifier": "Student One",
+            "password": "supersecure",
+            "role": "student",
+        },
+    )
+
+    assert sign_in_response.status_code == 200
+    signed_in = sign_in_response.json()
+    assert signed_in["id"] == created["id"]
+    assert signed_in["username"] == "student01"
+
+
+def test_auth_preview_conflicts_on_duplicate_display_name(tmp_path, monkeypatch) -> None:
+    monkeypatch.setattr(auth_service, "AUTH_DB_PATH", tmp_path / "auth.db")
+
+    first_response = client.post(
+        "/api/v1/auth/accounts",
+        json={
+            "name": "Shared Name",
+            "username": "student01",
+            "password": "supersecure",
+            "role": "student",
+        },
+    )
+    second_response = client.post(
+        "/api/v1/auth/accounts",
+        json={
+            "name": "Shared Name",
+            "username": "faculty01",
+            "password": "supersecure",
+            "role": "admin",
+        },
+    )
+
+    assert first_response.status_code == 201
+    assert second_response.status_code == 201
+
+    preview_response = client.get(
+        "/api/v1/auth/accounts/preview",
+        params={"identifier": "Shared Name"},
+    )
+
+    assert preview_response.status_code == 409
+    assert "display name" in preview_response.json()["detail"]
+
+
+def test_auth_sign_in_upgrades_legacy_sha256_hash(tmp_path, monkeypatch) -> None:
+    db_path = tmp_path / "auth.db"
+    monkeypatch.setattr(auth_service, "AUTH_DB_PATH", db_path)
+
+    auth_service._ensure_store()
+    with sqlite3.connect(db_path) as connection:
+        connection.execute(
+            """
+            INSERT INTO auth_accounts (
+                id,
+                name,
+                username,
+                normalized_display_name,
+                password_hash,
+                password_salt,
+                password_scheme,
+                role,
+                created_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                "account-legacy",
+                "Legacy User",
+                "legacy01",
+                "legacy user",
+                hashlib.sha256("supersecure".encode("utf-8")).hexdigest(),
+                None,
+                "sha256",
+                "student",
+                "2026-03-21T00:00:00+00:00",
+            ),
+        )
+
+    sign_in_response = client.post(
+        "/api/v1/auth/sign-in",
+        json={
+            "identifier": "legacy01",
+            "password": "supersecure",
+            "role": "student",
+        },
+    )
+
+    assert sign_in_response.status_code == 200
+
+    with sqlite3.connect(db_path) as connection:
+        row = connection.execute(
+            """
+            SELECT password_hash, password_salt, password_scheme
+            FROM auth_accounts
+            WHERE id = ?
+            """,
+            ("account-legacy",),
+        ).fetchone()
+
+    assert row is not None
+    assert row[1]
+    assert row[2] == auth_service.CURRENT_PASSWORD_SCHEME
+    assert row[0] != hashlib.sha256("supersecure".encode("utf-8")).hexdigest()
 
 
 def test_procedure_route_returns_expected_shape() -> None:
@@ -196,6 +339,70 @@ def test_debrief_route_returns_ai_summary(monkeypatch) -> None:
     assert len(data["error_fingerprint"]) == 1
     assert data["audio_script"]
     assert len(data["quiz"]) == 3
+
+
+def test_coach_chat_route_returns_conversational_turn(monkeypatch) -> None:
+    def fake_generate_coach_turn(_payload):
+        return CoachChatResponse(
+            conversation_stage="planning",
+            coach_message=(
+                "Thanks for sharing your goal. We will focus on a steadier needle entry and a clearer first bite."
+            ),
+            plan_summary="Plan: stabilize setup, focus on entry angle, then capture one coached attempt.",
+            suggested_next_step="Tell me when you are ready to focus on the needle entry stage.",
+            camera_observations=["Practice surface is visible and centered."],
+            stage_focus=["Needle Entry", "Stable framing"],
+        )
+
+    monkeypatch.setattr(
+        coach_route.coach_service,
+        "generate_coach_turn",
+        fake_generate_coach_turn,
+    )
+
+    response = client.post(
+        "/api/v1/coach-chat",
+        json={
+            "procedure_id": "simple-interrupted-suture",
+            "stage_id": "needle_entry",
+            "skill_level": "beginner",
+            "feedback_language": "en",
+            "simulation_confirmation": True,
+            "image_base64": "ZmFrZQ==",
+            "messages": [
+                {
+                    "role": "user",
+                    "content": "I want to improve my needle entry angle.",
+                }
+            ],
+        },
+    )
+
+    assert response.status_code == 200
+    data = response.json()
+    assert data["conversation_stage"] == "planning"
+    assert data["camera_observations"] == ["Practice surface is visible and centered."]
+
+
+def test_tts_route_returns_audio_payload(monkeypatch) -> None:
+    monkeypatch.setattr(
+        tts_route.tts_service,
+        "synthesize_speech_wav",
+        lambda _payload: b"RIFFfakewav",
+    )
+
+    response = client.post(
+        "/api/v1/tts",
+        json={
+            "text": "Coach voice check.",
+            "feedback_language": "en",
+            "coach_voice": "guide_male",
+        },
+    )
+
+    assert response.status_code == 200
+    assert response.headers["content-type"].startswith("audio/wav")
+    assert response.content == b"RIFFfakewav"
 
 
 def test_analyze_route_returns_503_for_missing_ai_configuration(monkeypatch) -> None:

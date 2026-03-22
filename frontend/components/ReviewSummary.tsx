@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from "react";
 
-import { canUseSpeechSynthesis, speakText, stopSpeechPlayback } from "@/lib/audio";
+import { speakText, stopSpeechPlayback } from "@/lib/audio";
 import { getFeedbackLanguageLabel } from "@/lib/equity";
 import { inferEventGraded } from "@/lib/learnerProfile";
 import type {
@@ -67,14 +67,15 @@ export function ReviewSummary({
     };
   }, []);
 
-  function handlePlayDebriefAudio() {
+  async function handlePlayDebriefAudio() {
     if (!debrief) {
       return;
     }
 
-    const didSpeak = speakText(
+    const didSpeak = await speakText(
       debrief.audio_script,
       session.equityMode.feedbackLanguage,
+      session.equityMode.coachVoice,
     );
     setIsSpeaking(didSpeak);
   }
@@ -89,11 +90,10 @@ export function ReviewSummary({
       <article className="panel">
         <span className="pill">Session recap</span>
         <h1 className="review-title" style={{ marginTop: 16 }}>
-          Phase 3 review
+          Practice review
         </h1>
         <p className="review-subtle" style={{ marginTop: 14 }}>
-          This page hydrates from browser session data first, then layers on a stored
-          session debrief when one is available.
+          Revisit the attempt timeline, read the debrief, and decide what to repeat next.
         </p>
         <p className="review-score" style={{ marginTop: 18 }}>
           {totalScore}
@@ -140,7 +140,7 @@ export function ReviewSummary({
 
         <article className="review-card" style={{ marginTop: 22 }}>
           <header>
-            <strong>Last coaching cue</strong>
+            <strong>Latest coaching cue</strong>
             <span className="pill">Latest attempt</span>
           </header>
           <p className="review-subtle">{latestFeedback}</p>
@@ -151,15 +151,15 @@ export function ReviewSummary({
         <article className="review-card">
           <header>
             <strong>Session debrief</strong>
-            <span className="pill">Study summary</span>
+            <span className="pill">AI summary</span>
           </header>
           <p className="review-subtle" style={{ marginTop: 12 }}>
-            Connection: {isOnline ? "online" : "offline"}. Feedback language:{" "}
+            Session status: {isOnline ? "online" : "offline"}. Feedback language:{" "}
             {getFeedbackLanguageLabel(session.equityMode.feedbackLanguage)}.
           </p>
           {isDebriefLoading ? (
             <p className="review-subtle">
-              Building the session debrief from the stored stage history.
+              Building your debrief from the recorded attempts.
             </p>
           ) : null}
 
@@ -175,17 +175,17 @@ export function ReviewSummary({
 
           {!isDebriefLoading && !debriefError && session.events.length === 0 ? (
             <p className="review-subtle">
-              Capture at least one analyzed step to generate the personalized AI debrief.
+              Capture at least one analyzed step to generate a personalized debrief.
             </p>
           ) : null}
 
           {!isDebriefLoading && !debriefError && debrief ? (
             <div className="debrief-stack">
               <section className="debrief-block">
-                <strong>Personal error fingerprint</strong>
+                <strong>Recurring patterns</strong>
                 {errorFingerprint.length === 0 ? (
                   <p className="review-subtle" style={{ marginTop: 12 }}>
-                    Capture a few more graded attempts to build a stable cross-session pattern.
+                    Capture a few more graded attempts to build a reliable pattern.
                   </p>
                 ) : (
                   <ul className="feedback-list" style={{ marginTop: 12 }}>
@@ -223,7 +223,7 @@ export function ReviewSummary({
               </section>
 
               <section className="debrief-block">
-                <strong>Adaptive drill prescription</strong>
+                <strong>Next drill</strong>
                 {adaptiveDrill ? (
                   <>
                     <p className="review-subtle" style={{ marginTop: 12 }}>
@@ -249,7 +249,7 @@ export function ReviewSummary({
               </section>
 
               <section className="debrief-block">
-                <strong>3-step practice plan</strong>
+                <strong>Next 3 reps</strong>
                 <ol className="numbered-list" style={{ marginTop: 12 }}>
                   {debrief.practice_plan.map((item, index) => (
                     <li key={`${index}-${item}`}>{item}</li>
@@ -267,8 +267,7 @@ export function ReviewSummary({
               </section>
 
               {session.equityMode.enabled &&
-              session.equityMode.audioCoaching &&
-              canUseSpeechSynthesis() ? (
+              session.equityMode.audioCoaching ? (
                 <section className="debrief-block">
                   <strong>Audio coaching</strong>
                   <p className="review-subtle" style={{ marginTop: 10 }}>
@@ -277,7 +276,7 @@ export function ReviewSummary({
                   <div className="button-row" style={{ marginTop: 12 }}>
                     <button
                       className="button-secondary"
-                      onClick={handlePlayDebriefAudio}
+                      onClick={() => void handlePlayDebriefAudio()}
                       type="button"
                     >
                       Play Debrief Audio
@@ -314,10 +313,10 @@ export function ReviewSummary({
           {!isDebriefLoading && !debrief && (errorFingerprint.length > 0 || adaptiveDrill) ? (
             <div className="debrief-stack">
               <section className="debrief-block">
-                <strong>Personal error fingerprint</strong>
+                <strong>Recurring patterns</strong>
                 {errorFingerprint.length === 0 ? (
                   <p className="review-subtle" style={{ marginTop: 12 }}>
-                    Capture a few more graded attempts to build a stable cross-session pattern.
+                    Capture a few more graded attempts to build a reliable pattern.
                   </p>
                 ) : (
                   <ul className="feedback-list" style={{ marginTop: 12 }}>
@@ -337,7 +336,7 @@ export function ReviewSummary({
               </section>
 
               <section className="debrief-block">
-                <strong>Adaptive drill prescription</strong>
+                <strong>Next drill</strong>
                 {adaptiveDrill ? (
                   <>
                     <p className="review-subtle" style={{ marginTop: 12 }}>
@@ -399,7 +398,7 @@ export function ReviewSummary({
           </header>
           {reviewCases.length === 0 ? (
             <p className="review-subtle">
-              No human-review cases were attached to this session.
+              No faculty review cases were attached to this session.
             </p>
           ) : (
             <ul className="timeline-list">

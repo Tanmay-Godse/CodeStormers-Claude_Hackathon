@@ -66,6 +66,57 @@ def test_send_json_message_converts_multimodal_payload(monkeypatch) -> None:
     )
 
 
+def test_send_json_message_converts_audio_payload(monkeypatch) -> None:
+    captured = {}
+
+    def fake_post(url, *, headers, json, timeout):
+        captured["json"] = json
+        return FakeResponse(
+            status_code=200,
+            json_data={
+                "choices": [
+                    {
+                        "message": {
+                            "content": '{"ok": true}'
+                        }
+                    }
+                ]
+            },
+        )
+
+    monkeypatch.setattr(ai_client.settings, "ai_provider", "auto")
+    monkeypatch.setattr(ai_client.settings, "ai_api_base_url", "http://localhost:8000/v1")
+    monkeypatch.setattr(openai_compatible.httpx, "post", fake_post)
+
+    response = ai_client.send_json_message(
+        model="demo-audio-model",
+        max_tokens=200,
+        system_prompt="system",
+        user_content=[
+            {"type": "text", "text": "Listen to this learner and coach them."},
+            {
+                "type": "audio",
+                "source": {
+                    "type": "base64",
+                    "media_type": "audio/wav",
+                    "format": "wav",
+                    "data": "UklGRg==",
+                },
+            },
+        ],
+        output_schema={"type": "object"},
+    )
+
+    assert response == {"ok": True}
+    assert captured["json"]["messages"][1]["content"][1] == {
+        "type": "input_audio",
+        "input_audio": {
+            "data": "UklGRg==",
+            "format": "wav",
+        },
+    }
+
+
 def test_send_json_message_reads_nested_text_parts(monkeypatch) -> None:
     def fake_post(url, *, headers, json, timeout):
         return FakeResponse(
@@ -99,6 +150,63 @@ def test_send_json_message_reads_nested_text_parts(monkeypatch) -> None:
     )
 
     assert response == {"step_status": "retry"}
+
+
+def test_send_json_message_retries_with_json_object_when_json_schema_is_rejected(
+    monkeypatch,
+) -> None:
+    captured_payloads = []
+
+    def fake_post(url, *, headers, json, timeout):
+        captured_payloads.append(json)
+        if len(captured_payloads) == 1:
+            return FakeResponse(
+                status_code=400,
+                json_data={
+                    "error": {
+                        "message": "response_format json_schema is not supported",
+                    }
+                },
+            )
+
+        return FakeResponse(
+            status_code=200,
+            json_data={
+                "choices": [
+                    {
+                        "message": {
+                            "content": '{"ok": true}'
+                        }
+                    }
+                ]
+            },
+        )
+
+    monkeypatch.setattr(ai_client.settings, "ai_provider", "auto")
+    monkeypatch.setattr(ai_client.settings, "ai_api_base_url", "https://api.z.ai/api/paas/v4")
+    monkeypatch.setattr(ai_client.settings, "ai_api_key", "demo-key")
+    monkeypatch.setattr(openai_compatible.httpx, "post", fake_post)
+
+    response = ai_client.send_json_message(
+        model="glm-4.6v-flash",
+        max_tokens=200,
+        system_prompt="Return structured coaching.",
+        user_content=[{"type": "text", "text": "Analyze this frame."}],
+        output_schema={
+            "type": "object",
+            "properties": {
+                "ok": {"type": "boolean"},
+            },
+            "required": ["ok"],
+        },
+    )
+
+    assert response == {"ok": True}
+    assert len(captured_payloads) == 2
+    assert captured_payloads[0]["response_format"]["type"] == "json_schema"
+    assert captured_payloads[1]["response_format"] == {"type": "json_object"}
+    assert "matches this schema exactly" in captured_payloads[1]["messages"][0]["content"]
+    assert '"required": [' in captured_payloads[1]["messages"][0]["content"]
 
 
 def test_send_json_message_auto_detects_anthropic_endpoint(monkeypatch) -> None:

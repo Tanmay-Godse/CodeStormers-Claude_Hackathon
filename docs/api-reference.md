@@ -68,6 +68,79 @@ curl http://localhost:8001/api/v1/procedures/simple-interrupted-suture
 
 - `404` if the procedure id is unknown
 
+## `GET /auth/accounts/preview`
+
+Looks up an existing workspace account by username or display name.
+
+### Query parameters
+
+- `identifier`: username or display name to check
+
+### Example
+
+```bash
+curl "http://localhost:8001/api/v1/auth/accounts/preview?identifier=student01"
+```
+
+### Successful response
+
+```json
+{
+  "id": "account-demo",
+  "name": "Student One",
+  "username": "student01",
+  "role": "student",
+  "created_at": "2026-03-21T18:45:00.000000+00:00"
+}
+```
+
+### Error behavior
+
+- `404` if no account matches the identifier
+- `409` if more than one account shares the same display name and the username was not used
+
+## `POST /auth/accounts`
+
+Creates a new workspace account and persists it in the backend SQLite database.
+
+### Request body
+
+```json
+{
+  "name": "Student One",
+  "username": "student01",
+  "password": "supersecure",
+  "role": "student"
+}
+```
+
+### Error behavior
+
+- `201` on success
+- `400` for invalid usernames or short passwords
+- `409` if the username is already registered
+
+## `POST /auth/sign-in`
+
+Signs in an existing workspace account by identifier and password.
+
+### Request body
+
+```json
+{
+  "identifier": "student01",
+  "password": "supersecure",
+  "role": "student"
+}
+```
+
+### Error behavior
+
+- `200` on success
+- `401` for invalid credentials
+- `404` if the account does not exist
+- `409` if the requested role does not match the stored account role
+
 ## `POST /analyze-frame`
 
 Submits one captured trainer frame for stage analysis.

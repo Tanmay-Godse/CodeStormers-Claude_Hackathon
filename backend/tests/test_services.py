@@ -1,9 +1,10 @@
 import pytest
 
 from app.schemas.analyze import AnalyzeFrameRequest, SafetyGateResult
+from app.schemas.coach import CoachChatRequest
 from app.schemas.debrief import DebriefRequest, DebriefEvent
 from app.schemas.review import ResolveReviewCaseRequest
-from app.services import analysis_service, debrief_service
+from app.services import analysis_service, coach_service, debrief_service
 from app.services.ai_client import AIRequestError, AIResponseError
 from app.services import review_queue_service, safety_service
 
@@ -230,6 +231,75 @@ def test_debrief_service_localizes_fallback_response() -> None:
     assert response.feedback_language == "es"
     assert "simulacion" in response.strengths[0].lower()
     assert "coaching" in response.audio_script.lower() or "resumen" in response.audio_script.lower()
+
+
+def test_coach_service_sends_audio_to_model(monkeypatch) -> None:
+    captured = {}
+
+    def fake_send_json_message(**kwargs):
+        captured["request"] = kwargs
+        return {
+            "conversation_stage": "planning",
+            "coach_message": "Thanks. We will work on entry angle first.",
+            "plan_summary": "Plan: focus on entry angle and steady framing.",
+            "suggested_next_step": "Center the field and take one slow attempt.",
+            "camera_observations": [],
+            "stage_focus": ["Needle Entry"],
+            "learner_goal_summary": "Improve my entry angle",
+        }
+
+    monkeypatch.setattr(
+        coach_service,
+        "send_json_message",
+        fake_send_json_message,
+    )
+
+    response = coach_service.generate_coach_turn(
+        CoachChatRequest(
+            procedure_id="simple-interrupted-suture",
+            stage_id="needle_entry",
+            skill_level="beginner",
+            audio_base64="UklGRg==",
+            audio_format="wav",
+            messages=[],
+        )
+    )
+
+    assert response.learner_goal_summary == "Improve my entry angle"
+    assert captured["request"]["user_content"][-1] == {
+        "type": "audio",
+        "source": {
+            "type": "base64",
+            "media_type": "audio/wav",
+            "format": "wav",
+            "data": "UklGRg==",
+        },
+    }
+
+
+def test_coach_service_surfaces_missing_vllm_audio_support(monkeypatch) -> None:
+    monkeypatch.setattr(
+        coach_service,
+        "send_json_message",
+        lambda **_: (_ for _ in ()).throw(
+            AIRequestError("Please install vllm[audio] for audio support")
+        ),
+    )
+
+    response = coach_service.generate_coach_turn(
+        CoachChatRequest(
+            procedure_id="simple-interrupted-suture",
+            stage_id="needle_entry",
+            skill_level="beginner",
+            audio_base64="UklGRg==",
+            audio_format="wav",
+            messages=[],
+        )
+    )
+
+    assert response.conversation_stage == "blocked"
+    assert "audio support" in response.coach_message.lower()
+    assert "typed" in response.plan_summary.lower()
 
 
 def test_safety_service_blocks_without_simulation_confirmation() -> None:

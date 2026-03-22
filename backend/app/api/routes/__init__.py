@@ -1,4 +1,3 @@
-from app.api.routes import analyze, health, procedures
+from app.api.routes import analyze, auth, coach, health, procedures, tts
 
-__all__ = ["analyze", "health", "procedures"]
-
+__all__ = ["analyze", "auth", "coach", "health", "procedures", "tts"]

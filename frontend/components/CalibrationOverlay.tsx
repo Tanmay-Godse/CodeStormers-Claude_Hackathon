@@ -79,8 +79,8 @@ export function CalibrationOverlay({
         <div className="camera-guide-note">
           <h3>Centered guide fallback</h3>
           <p>
-            Align the practice surface inside the dashed frame. This keeps the demo
-            stable when manual corner calibration is not worth the risk.
+            Align the practice surface inside the dashed frame. This keeps the practice
+            field stable when manual corner calibration is not worth the extra setup.
           </p>
         </div>
       </div>
