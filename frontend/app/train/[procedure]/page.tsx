@@ -54,9 +54,9 @@ import type {
 
 const AUTO_COACH_INTERVAL_MS = 1_000;
 const DEMO_CAMERA_SESSION_LIMIT_MS = 2 * 60 * 1000;
-const VOICE_RECORDING_MAX_DURATION_MS = 10_000;
-const VOICE_RECORDING_MIN_SPEECH_MS = 400;
-const VOICE_RECORDING_SILENCE_DURATION_MS = 1_100;
+const VOICE_RECORDING_MAX_DURATION_MS = 14_000;
+const VOICE_RECORDING_MIN_SPEECH_MS = 260;
+const VOICE_RECORDING_SILENCE_DURATION_MS = 1_700;
 const VOICE_POST_SPEAK_LISTEN_DELAY_MS = 350;
 const VOICE_RELISTEN_DELAY_MS = 120;
 const VOICE_RECOVERY_RETRY_DELAY_MS = 250;
@@ -354,6 +354,7 @@ export default function TrainProcedurePage() {
   const demoDeadlineRef = useRef<number | null>(null);
   const demoSessionExpiredRef = useRef(false);
   const liveCaptureProfileRef = useRef<string | null>(null);
+  const autoSetupAnalysisAttemptedRef = useRef(false);
   const lastCoachMessageRef = useRef<{
     at: number;
     conversationStage: CoachChatResponse["conversation_stage"];
@@ -561,12 +562,12 @@ export default function TrainProcedurePage() {
     demoSessionExpiredRef.current = demoSessionExpired;
   }, [demoSessionExpired]);
 
-  function persistSession(nextSession: SessionRecord) {
+  const persistSession = useCallback((nextSession: SessionRecord) => {
     saveSession(nextSession);
     setSession(nextSession);
-  }
+  }, []);
 
-  function persistSessionPatch(nextPatch: Partial<SessionRecord>) {
+  const persistSessionPatch = useCallback((nextPatch: Partial<SessionRecord>) => {
     if (!session) {
       return;
     }
@@ -576,7 +577,7 @@ export default function TrainProcedurePage() {
       ...nextPatch,
       updatedAt: new Date().toISOString(),
     });
-  }
+  }, [persistSession, session]);
 
   function cancelActiveVoiceRecording() {
     const activeRecording = activeVoiceRecordingRef.current;
@@ -598,6 +599,7 @@ export default function TrainProcedurePage() {
   function handleCameraReadyChange(ready: boolean) {
     setCameraReady(ready);
     liveCaptureProfileRef.current = ready ? captureProfileSignature : null;
+    autoSetupAnalysisAttemptedRef.current = false;
 
     if (ready) {
       demoDeadlineRef.current = Date.now() + DEMO_CAMERA_SESSION_LIMIT_MS;
@@ -747,16 +749,17 @@ export default function TrainProcedurePage() {
     setVoiceSessionStatus(cameraReady ? "starting" : "idle");
     setFrozenFrameUrl(null);
     setStudentQuestion("");
-    setSimulationConfirmed(false);
+    setSimulationConfirmed(true);
+    autoSetupAnalysisAttemptedRef.current = false;
     setAnalyzeError(null);
     setActiveWorkspacePanel("checklist");
   }
 
-  function appendOfflinePracticeLog(
+  const appendOfflinePracticeLog = useCallback((
     sessionSnapshot: SessionRecord,
     frame: { width: number; height: number },
     reason: string,
-  ) {
+  ) => {
     const offlineLog: OfflinePracticeLog = {
       id: crypto.randomUUID(),
       stageId: currentStageId,
@@ -778,9 +781,9 @@ export default function TrainProcedurePage() {
     setFeedback(null);
     setFeedbackStageId(null);
     setAnalyzeError(reason);
-  }
+  }, [currentStageId, equityMode, persistSession, studentQuestion]);
 
-  async function handleAnalyzeStep() {
+  const handleAnalyzeStep = useCallback(async () => {
     if (!procedure || !currentStage || !session || !authUser) {
       return;
     }
@@ -869,6 +872,19 @@ export default function TrainProcedurePage() {
 
       setFeedback(response);
       setFeedbackStageId(currentStage.id);
+
+      if (
+        currentStage.id === "setup" &&
+        response.step_status === "pass" &&
+        response.grading_decision === "graded"
+      ) {
+        const nextStageId = findNextStageId(procedure, currentStage.id);
+        if (nextStageId) {
+          setCurrentStageId(nextStageId);
+          setStudentQuestion("");
+          setActiveWorkspacePanel("checklist");
+        }
+      }
     } catch (error) {
       if (
         equityMode.offlinePracticeLogging &&
@@ -889,7 +905,22 @@ export default function TrainProcedurePage() {
     } finally {
       setIsAnalyzing(false);
     }
-  }
+  }, [
+    appendOfflinePracticeLog,
+    authUser,
+    calibration,
+    currentStage,
+    equityMode,
+    isOnline,
+    latestLearnerGoal,
+    practiceSurface,
+    procedure,
+    persistSession,
+    session,
+    simulationConfirmed,
+    skillLevel,
+    studentQuestion,
+  ]);
 
   function handleLogout() {
     clearAuthUser();
@@ -1050,6 +1081,48 @@ export default function TrainProcedurePage() {
       window.clearInterval(intervalId);
     };
   }, [cameraReady]);
+
+  useEffect(() => {
+    if (
+      !cameraReady ||
+      !procedure ||
+      !session ||
+      !currentStage ||
+      currentStage.id !== "setup" ||
+      isAnalyzing ||
+      !simulationConfirmed
+    ) {
+      return;
+    }
+
+    const alreadyPassedSetup = session.events.some(
+      (event) =>
+        event.stageId === "setup" &&
+        event.stepStatus === "pass" &&
+        event.graded,
+    );
+
+    if (alreadyPassedSetup || autoSetupAnalysisAttemptedRef.current) {
+      return;
+    }
+
+    const timeoutId = window.setTimeout(() => {
+      autoSetupAnalysisAttemptedRef.current = true;
+      void handleAnalyzeStep();
+    }, 1400);
+
+    return () => {
+      window.clearTimeout(timeoutId);
+    };
+  }, [
+    cameraReady,
+    currentStage,
+    handleAnalyzeStep,
+    isAnalyzing,
+    procedure,
+    session,
+    simulationConfirmed,
+  ]);
 
   useEffect(() => {
     const generation = voiceLoopGenerationRef.current + 1;

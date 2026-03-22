@@ -47,6 +47,13 @@ def analyze_frame_payload(payload: AnalyzeFrameRequest) -> AnalyzeFrameResponse:
         procedure=procedure,
         stage=stage,
     )
+    analysis_draft = _apply_setup_stage_acceptance(
+        draft=analysis_draft,
+        payload=payload,
+        procedure=procedure,
+        stage=stage,
+        safety_gate=safety_gate,
+    )
     try:
         overlay_target_ids = validate_overlay_target_ids(
             stage,
@@ -154,6 +161,7 @@ def _build_analysis_system_prompt() -> str:
         "Use 'retry' when the frame is clear enough to judge but the technique needs correction. "
         "Use 'unclear' when framing, blur, occlusion, or missing tools make the step hard to judge. "
         "Use 'unsafe' when the learner appears to be using instruments or tension in a clearly unsafe way even for simulation. "
+        "For the setup stage, a clearly visible orange, banana, foam pad, bench model, or other inert practice surface is enough to accept the setup and mark the stage as pass unless the frame is truly unclear or clearly unsafe. "
         "Only return overlay_target_ids from the allowed list. "
         "Write concise, specific coaching in a supportive tone. "
         "When equity_mode is enabled, prefer plain language and short instructions that work well on low-resource devices."
@@ -204,6 +212,13 @@ def _build_analysis_user_content(
         },
     }
 
+    if stage.id == "setup":
+        stage_context["setup_acceptance_rule"] = (
+            "If the frame clearly shows an approved inert practice surface such as an orange, banana, foam pad, or bench model, "
+            "treat the setup as pass even if the framing is not perfect yet. Only use retry when the setup is visible but needs a small fix, "
+            "and use unclear only when the surface or main tools cannot be judged reliably."
+        )
+
     return [
         {
             "type": "text",
@@ -249,6 +264,49 @@ def _normalize_visible_observations(
             cleaned.append(fallback_line)
 
     return cleaned[:4]
+
+
+def _apply_setup_stage_acceptance(
+    *,
+    draft: AnalysisDraft,
+    payload: AnalyzeFrameRequest,
+    procedure: ProcedureDefinition,
+    stage: ProcedureStage,
+    safety_gate,
+) -> AnalysisDraft:
+    if (
+        stage.id != "setup"
+        or safety_gate.status != "cleared"
+        or not payload.simulation_confirmation
+        or draft.step_status == "unsafe"
+    ):
+        return draft
+
+    if draft.step_status == "pass":
+        return draft
+
+    observations = _clean_lines(draft.visible_observations)
+    ready_note = (
+        f"Approved practice surface detected for setup: {(payload.practice_surface or procedure.practice_surface).strip()}."
+    )
+    if ready_note not in observations:
+        observations.insert(0, ready_note)
+
+    suggested_target = stage.overlay_targets[:1]
+
+    return draft.model_copy(
+        update={
+            "step_status": "pass",
+            "confidence": max(draft.confidence, 0.92),
+            "visible_observations": observations[:4],
+            "issues": [],
+            "coaching_message": (
+                "Setup looks ready. Keep the practice surface centered and move on to the grip stage."
+            ),
+            "next_action": "Proceed to Grip and capture the next coached rep when you are ready.",
+            "overlay_target_ids": suggested_target,
+        }
+    )
 
 
 def _determine_human_review(

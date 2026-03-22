@@ -208,10 +208,10 @@ export type VoiceRecordingOptions = {
   silenceThreshold?: number;
 };
 
-const DEFAULT_VOICE_RECORDING_MAX_DURATION_MS = 12_000;
-const DEFAULT_VOICE_RECORDING_MIN_SPEECH_MS = 450;
-const DEFAULT_VOICE_RECORDING_SILENCE_DURATION_MS = 1_250;
-const DEFAULT_VOICE_RECORDING_SILENCE_THRESHOLD = 0.018;
+const DEFAULT_VOICE_RECORDING_MAX_DURATION_MS = 14_000;
+const DEFAULT_VOICE_RECORDING_MIN_SPEECH_MS = 260;
+const DEFAULT_VOICE_RECORDING_SILENCE_DURATION_MS = 1_700;
+const DEFAULT_VOICE_RECORDING_SILENCE_THRESHOLD = 0.012;
 
 let activeAudioElement: HTMLAudioElement | null = null;
 let activeAudioUrl: string | null = null;
@@ -594,6 +594,7 @@ export async function startVoiceRecording(
   let resolveResult: ((clip: RecordedVoiceClip | null) => void) | null = null;
   let speechStartedAt: number | null = null;
   let lastSpeechAt: number | null = null;
+  let accumulatedSpeechDurationMs = 0;
   let maxDurationTimer: ReturnType<typeof setTimeout> | null = null;
   const result = new Promise<RecordedVoiceClip | null>((resolve) => {
     resolveResult = resolve;
@@ -610,19 +611,21 @@ export async function startVoiceRecording(
     const now =
       typeof performance !== "undefined" ? performance.now() : Date.now();
     const rms = calculateRootMeanSquare(copy);
+    const chunkDurationMs = (copy.length / inputBuffer.sampleRate) * 1000;
 
     if (rms >= silenceThreshold) {
       if (speechStartedAt === null) {
         speechStartedAt = now;
       }
-      lastSpeechAt = now;
+      lastSpeechAt = now + chunkDurationMs;
+      accumulatedSpeechDurationMs += chunkDurationMs;
       return;
     }
 
     if (
       speechStartedAt !== null &&
       lastSpeechAt !== null &&
-      now - speechStartedAt >= minSpeechDurationMs &&
+      accumulatedSpeechDurationMs >= minSpeechDurationMs &&
       now - lastSpeechAt >= silenceDurationMs
     ) {
       void finalize(false);
@@ -664,10 +667,7 @@ export async function startVoiceRecording(
         await audioContext.close();
       }
 
-      const speechDurationMs =
-        speechStartedAt !== null && lastSpeechAt !== null
-          ? lastSpeechAt - speechStartedAt
-          : 0;
+      const speechDurationMs = accumulatedSpeechDurationMs;
 
       if (
         discard ||

@@ -117,6 +117,53 @@ def test_analysis_service_backfills_trimmed_response_fields(monkeypatch) -> None
     assert response.next_action
 
 
+def test_analysis_service_accepts_setup_when_simulation_surface_is_cleared(monkeypatch) -> None:
+    monkeypatch.setattr(
+        safety_service,
+        "evaluate_safety_gate",
+        lambda **_: make_cleared_safety_gate(),
+    )
+    monkeypatch.setattr(
+        analysis_service,
+        "send_json_message",
+        lambda **_: {
+            "step_status": "retry",
+            "confidence": 0.61,
+            "visible_observations": [
+                "orange practice surface is visible",
+                "needle driver is partly visible",
+            ],
+            "issues": [
+                {
+                    "code": "tool_partial",
+                    "severity": "low",
+                    "message": "The tool is only partly visible.",
+                }
+            ],
+            "coaching_message": "Bring the tool slightly higher in frame.",
+            "next_action": "Capture another setup frame.",
+            "overlay_target_ids": ["surface_center"],
+        },
+    )
+
+    response = analysis_service.analyze_frame_payload(
+        AnalyzeFrameRequest(
+            procedure_id="simple-interrupted-suture",
+            stage_id="setup",
+            skill_level="beginner",
+            image_base64="ZmFrZQ==",
+            simulation_confirmation=True,
+            practice_surface="Orange, banana, or foam pad",
+        )
+    )
+
+    assert response.step_status == "pass"
+    assert response.grading_decision == "graded"
+    assert response.issues == []
+    assert response.overlay_target_ids == ["surface_center"]
+    assert "setup looks ready" in response.coaching_message.lower()
+
+
 def test_debrief_service_falls_back_when_ai_request_fails(monkeypatch) -> None:
     monkeypatch.setattr(
         debrief_service,
