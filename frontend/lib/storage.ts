@@ -349,7 +349,7 @@ export async function signInAuthUser(input: LoginAuthInput): Promise<AuthUser> {
 
   const identifier = input.username.trim();
   if (identifier.length < 3) {
-    throw new Error("Enter the username or display name for this workspace account.");
+    throw new Error("Enter the username for this workspace account.");
   }
 
   const password = validatePassword(input.password);
@@ -443,7 +443,7 @@ export async function previewAuthAccount(
 
   const trimmedIdentifier = identifier.trim();
   if (trimmedIdentifier.length < 3) {
-    throw new Error("Enter the username or display name for this workspace account.");
+    throw new Error("Enter the username for this workspace account.");
   }
 
   const account = await previewPersistedAuthAccount(trimmedIdentifier);

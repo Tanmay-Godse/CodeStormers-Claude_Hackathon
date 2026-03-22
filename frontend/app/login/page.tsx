@@ -236,7 +236,7 @@ function LoginPageContent() {
 
   const cardCopy =
     step === "identify"
-      ? "Enter the username or display name for this workspace account. If we find a saved match, we will ask for the password. If not, we will help you create the account next."
+      ? "Enter your username only for this workspace account. If we find a saved match, we will ask for the password. If not, we will help you create the account next."
       : step === "sign-in"
         ? "This sign-in is backed by the local backend, with account records stored for the workspace. Password comes second so the first screen stays focused."
         : "No saved workspace account matched that identifier, so the next step is to create one and route it to the right workspace.";
@@ -325,20 +325,20 @@ function LoginPageContent() {
             {step === "identify" ? (
               <form className="auth-form" onSubmit={(event) => void handleIdentify(event)}>
                 <label className="field-label">
-                  Username or display name
+                  Username only
                   <input
                     autoComplete="username"
                     className="text-input"
                     onChange={(event) => setIdentifier(event.target.value)}
-                    placeholder="student01, faculty.reviewer, or Student Name"
+                    placeholder="student01 or faculty.reviewer"
                     required
                     value={identifier}
                   />
                 </label>
 
                 <p className="auth-helper-copy">
-                  We will first look for an existing workspace account. If none is found,
-                  the next screen becomes account creation automatically.
+                  Use the saved username for this account. Do not enter the display
+                  name here.
                 </p>
 
                 <button className="button-primary" disabled={isSubmitting} type="submit">
