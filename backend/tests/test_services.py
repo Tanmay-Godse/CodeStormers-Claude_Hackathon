@@ -553,6 +553,37 @@ def test_safety_service_does_not_block_benign_or_word_in_student_question(
     assert result.status == "cleared"
 
 
+def test_safety_service_clears_setup_when_classifier_fails(
+    monkeypatch,
+) -> None:
+    monkeypatch.setattr(
+        safety_service,
+        "send_json_message",
+        lambda **_: (_ for _ in ()).throw(AIRequestError("boom")),
+    )
+
+    payload = AnalyzeFrameRequest(
+        procedure_id="simple-interrupted-suture",
+        stage_id="setup",
+        skill_level="beginner",
+        image_base64="ZmFrZQ==",
+        simulation_confirmation=True,
+        practice_surface="Orange, banana, or foam pad",
+    )
+
+    procedure = analysis_service.load_procedure("simple-interrupted-suture")
+    stage = analysis_service.load_stage(procedure, "setup")
+    result = safety_service.evaluate_safety_gate(
+        payload=payload,
+        procedure=procedure,
+        stage=stage,
+    )
+
+    assert result.status == "cleared"
+    assert "setup stage was allowed" in result.reason.lower()
+    assert result.refusal_message is None
+
+
 def test_review_queue_service_resolves_case(tmp_path, monkeypatch) -> None:
     monkeypatch.setattr(
         review_queue_service,

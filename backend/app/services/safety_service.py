@@ -68,6 +68,13 @@ def evaluate_safety_gate(
         )
         draft = SafetyGateDraft.model_validate(response_data)
     except (AIRequestError, AIResponseError, ValidationError):
+        setup_fallback = _build_setup_stage_fallback_result(
+            payload=payload,
+            procedure=procedure,
+            stage=stage,
+        )
+        if setup_fallback is not None:
+            return setup_fallback
         return SafetyGateResult(
             status="needs_human_review",
             confidence=0.0,
@@ -187,6 +194,30 @@ def _override_nonclinical_person_false_positive(
         reason=(
             "A learner or bystander being visible in a non-clinical scene is allowed for simulation practice. "
             "No real-patient or live-clinical indicators were detected, so the frame was passed to the main analyzer."
+        ),
+        refusal_message=None,
+    )
+
+
+def _build_setup_stage_fallback_result(
+    *,
+    payload: AnalyzeFrameRequest,
+    procedure: ProcedureDefinition,
+    stage: ProcedureStage,
+) -> SafetyGateResult | None:
+    if stage.id != "setup" or not payload.simulation_confirmation:
+        return None
+
+    practice_surface = (payload.practice_surface or procedure.practice_surface).strip()
+    if not practice_surface:
+        return None
+
+    return SafetyGateResult(
+        status="cleared",
+        confidence=0.58,
+        reason=(
+            "The setup stage was allowed to continue because the learner confirmed a simulation-only practice scene "
+            "and the safety classifier could not finish. The main analyzer will still verify that a practice surface is visible."
         ),
         refusal_message=None,
     )
