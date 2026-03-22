@@ -6,7 +6,6 @@ import { Suspense, useEffect, useState } from "react";
 
 import {
   clearAuthUser,
-  createAuthAccount,
   getAuthUser,
   previewAuthAccount,
   refreshAuthUser,
@@ -14,16 +13,27 @@ import {
 } from "@/lib/storage";
 import type { AuthUser, UserRole } from "@/lib/types";
 
-type AuthStep = "identify" | "sign-in" | "create-account";
+type AuthStep = "identify" | "sign-in";
 
 type PreviewedAccount = {
   adminApprovalStatus: AuthUser["adminApprovalStatus"];
   isDeveloper: boolean;
+  isSeeded: boolean;
+  liveSessionLimit?: number | null;
+  liveSessionRemaining?: number | null;
+  liveSessionUsed: number;
   name: string;
   role: UserRole;
   requestedRole?: "admin" | null;
   username: string;
 };
+
+const JUDGE_DEMO_ACCOUNTS = [
+  "Student_1@gmail.com",
+  "Student_2@gmail.com",
+  "Student_3@gmail.com",
+  "Student_4@gmail.com",
+] as const;
 
 function getDefaultDestination(account: Pick<AuthUser, "isDeveloper" | "role">) {
   if (account.isDeveloper) {
@@ -31,17 +41,6 @@ function getDefaultDestination(account: Pick<AuthUser, "isDeveloper" | "role">) 
   }
 
   return account.role === "admin" ? "/admin/reviews" : "/dashboard";
-}
-
-function suggestUsername(identifier: string) {
-  const normalized = identifier
-    .trim()
-    .toLowerCase()
-    .replace(/\s+/g, ".")
-    .replace(/[^a-z0-9._@-]/g, "")
-    .slice(0, 24);
-
-  return normalized || "student01";
 }
 
 function LoginPageContent() {
@@ -56,16 +55,11 @@ function LoginPageContent() {
 
   const [currentUser, setCurrentUser] = useState<AuthUser | null>(null);
   const [step, setStep] = useState<AuthStep>("identify");
-  const [role, setRole] = useState<UserRole>(requestedRole ?? "student");
   const [identifier, setIdentifier] = useState("");
   const [previewedAccount, setPreviewedAccount] = useState<PreviewedAccount | null>(
     null,
   );
   const [password, setPassword] = useState("");
-  const [createName, setCreateName] = useState("");
-  const [createUsername, setCreateUsername] = useState("");
-  const [createPassword, setCreatePassword] = useState("");
-  const [confirmPassword, setConfirmPassword] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
 
@@ -112,14 +106,6 @@ function LoginPageContent() {
   const requestedRoleMismatch =
     currentUser && requestedRole ? currentUser.role !== requestedRole : false;
 
-  function resetCreateFields(nextIdentifier: string) {
-    const trimmedIdentifier = nextIdentifier.trim();
-    setCreateName(trimmedIdentifier);
-    setCreateUsername(suggestUsername(trimmedIdentifier));
-    setCreatePassword("");
-    setConfirmPassword("");
-  }
-
   async function handleIdentify(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     setError(null);
@@ -130,13 +116,12 @@ function LoginPageContent() {
 
       if (matchedAccount) {
         setPreviewedAccount(matchedAccount);
-        setRole(matchedAccount.role);
         setPassword("");
         setStep("sign-in");
       } else {
-        setPreviewedAccount(null);
-        resetCreateFields(identifier);
-        setStep("create-account");
+        router.push(
+          `/access-required?username=${encodeURIComponent(identifier.trim())}`,
+        );
       }
     } catch (lookupError) {
       setError(
@@ -172,37 +157,6 @@ function LoginPageContent() {
     }
   }
 
-  async function handleCreateAccount(event: FormEvent<HTMLFormElement>) {
-    event.preventDefault();
-    setError(null);
-
-    if (createPassword !== confirmPassword) {
-      setError("Passwords do not match. Re-enter them and try again.");
-      return;
-    }
-
-    setIsSubmitting(true);
-
-    try {
-      const user = await createAuthAccount({
-        name: createName,
-        username: createUsername,
-        password: createPassword,
-        role,
-      });
-      setCurrentUser(user);
-      router.push(resolveDestination(user));
-    } catch (submitError) {
-      setError(
-        submitError instanceof Error
-          ? submitError.message
-          : "Account creation failed. Please try again.",
-      );
-    } finally {
-      setIsSubmitting(false);
-    }
-  }
-
   function handleContinue() {
     if (!currentUser) {
       return;
@@ -230,16 +184,12 @@ function LoginPageContent() {
   const cardTitle =
     step === "identify"
       ? "Welcome back"
-      : step === "sign-in"
-        ? "Enter your password"
-        : "Create your workspace account";
+      : "Enter your password";
 
   const cardCopy =
     step === "identify"
-      ? "Enter your username only for this workspace account. If we find a saved match, we will ask for the password. If not, we will help you create the account next."
-      : step === "sign-in"
-        ? "This sign-in is backed by the local backend, with account records stored for the workspace. Password comes second so the first screen stays focused."
-        : "No saved workspace account matched that identifier, so the next step is to create one and route it to the right workspace.";
+      ? "Enter one of the fixed demo usernames below. Self-service signup is disabled while the project is deployed publicly, so unknown usernames are routed back to the developer team."
+      : "This workspace uses fixed demo accounts with live-session limits. Enter the password for the matched username to continue.";
 
   return (
     <main className="page-shell auth-shell">
@@ -282,6 +232,18 @@ function LoginPageContent() {
                 <p className="feedback-copy" style={{ marginTop: 12 }}>
                   Signed in as <strong>{currentUser.username}</strong>.
                 </p>
+                {typeof currentUser.liveSessionRemaining === "number" ? (
+                  <p className="feedback-copy" style={{ marginTop: 12 }}>
+                    Live sessions remaining:{" "}
+                    <strong>
+                      {currentUser.liveSessionRemaining}
+                      {currentUser.liveSessionLimit
+                        ? ` / ${currentUser.liveSessionLimit}`
+                        : ""}
+                    </strong>
+                    .
+                  </p>
+                ) : null}
                 <p className="feedback-copy" style={{ marginTop: 12 }}>
                   You can continue with this account, or sign in with another user
                   below on the same device.
@@ -323,28 +285,47 @@ function LoginPageContent() {
             ) : null}
 
             {step === "identify" ? (
-              <form className="auth-form" onSubmit={(event) => void handleIdentify(event)}>
+              <>
+                <div className="feedback-block">
+                  <div className="feedback-header">
+                    <strong>Judge demo accounts</strong>
+                    <span className="pill">Password: Codestormers</span>
+                  </div>
+                  <div className="dashboard-progress-list" style={{ marginTop: 16 }}>
+                    {JUDGE_DEMO_ACCOUNTS.map((account) => (
+                      <div className="dashboard-progress-item" key={account}>
+                        <div className="dashboard-progress-copy">
+                          <strong>{account}</strong>
+                          <p>Fixed student demo account with 10 live sessions.</p>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+
+                <form className="auth-form" onSubmit={(event) => void handleIdentify(event)}>
                 <label className="field-label">
                   Username only
                   <input
                     autoComplete="username"
                     className="text-input"
                     onChange={(event) => setIdentifier(event.target.value)}
-                    placeholder="student01 or faculty.reviewer"
+                    placeholder="Student_1@gmail.com"
                     required
                     value={identifier}
                   />
                 </label>
 
                 <p className="auth-helper-copy">
-                  Use the saved username for this account. Do not enter the display
-                  name here.
+                  Use the fixed username for this account. New emails are managed by
+                  the developer team while the demo is public.
                 </p>
 
                 <button className="button-primary" disabled={isSubmitting} type="submit">
                   {isSubmitting ? "Checking Account..." : "Continue"}
                 </button>
-              </form>
+                </form>
+              </>
             ) : null}
 
             {step === "sign-in" && previewedAccount ? (
@@ -364,13 +345,15 @@ function LoginPageContent() {
                   <p className="panel-copy">
                     Username: <strong>{previewedAccount.username}</strong>
                   </p>
-                  {previewedAccount.requestedRole === "admin" &&
-                  previewedAccount.adminApprovalStatus === "pending" ? (
+                  {typeof previewedAccount.liveSessionRemaining === "number" ? (
                     <p className="panel-copy" style={{ marginTop: 12 }}>
-                      Admin reviewer access is pending approval from
-                      {" "}
-                      <strong>developer@gmail.com</strong>. Until then, this account
-                      signs in as a student.
+                      Live sessions remaining:{" "}
+                      <strong>
+                        {previewedAccount.liveSessionRemaining}
+                        {previewedAccount.liveSessionLimit
+                          ? ` / ${previewedAccount.liveSessionLimit}`
+                          : ""}
+                      </strong>
                     </p>
                   ) : null}
                 </div>
@@ -406,120 +389,10 @@ function LoginPageContent() {
               </>
             ) : null}
 
-            {step === "create-account" ? (
-              <form className="auth-form" onSubmit={(event) => void handleCreateAccount(event)}>
-                <div className="auth-account-preview">
-                  <div className="auth-account-header">
-                    <div>
-                      <span className="metric-label">Account setup</span>
-                      <strong>New workspace account</strong>
-                    </div>
-                    <span className="pill">
-                      {role === "admin" ? "admin request" : role}
-                    </span>
-                  </div>
-                  <p className="panel-copy">
-                    This identifier was not found, so the next step is to create a
-                    persisted account for this workspace.
-                  </p>
-                </div>
-
-                <label className="field-label">
-                  Role
-                  <select
-                    onChange={(event) => setRole(event.target.value as UserRole)}
-                    value={role}
-                  >
-                    <option value="student">Student</option>
-                    <option value="admin">Admin reviewer</option>
-                  </select>
-                </label>
-
-                {role === "admin" ? (
-                  <div className="feedback-block">
-                    <div className="feedback-header">
-                      <strong>Admin reviewer approval</strong>
-                      <span className="pill">developer required</span>
-                    </div>
-                    <p className="feedback-copy" style={{ marginTop: 12 }}>
-                      Admin requests are reviewed by the fixed developer account
-                      {" "}
-                      <strong>developer@gmail.com</strong>. Until approved, this new
-                      account continues in the student workspace.
-                    </p>
-                  </div>
-                ) : null}
-
-                <label className="field-label">
-                  Display name
-                  <input
-                    autoComplete="name"
-                    className="text-input"
-                    onChange={(event) => setCreateName(event.target.value)}
-                    placeholder={role === "admin" ? "Faculty Reviewer" : "Student Name"}
-                    required
-                    value={createName}
-                  />
-                </label>
-
-                <label className="field-label">
-                  Username
-                  <input
-                    autoComplete="username"
-                    className="text-input"
-                    onChange={(event) => setCreateUsername(event.target.value)}
-                    placeholder="Choose a username"
-                    required
-                    value={createUsername}
-                  />
-                </label>
-
-                <div className="inline-form-row">
-                  <label className="field-label">
-                    Password
-                    <input
-                      autoComplete="new-password"
-                      className="text-input"
-                      minLength={8}
-                      onChange={(event) => setCreatePassword(event.target.value)}
-                      placeholder="At least 8 characters"
-                      required
-                      type="password"
-                      value={createPassword}
-                    />
-                  </label>
-
-                  <label className="field-label">
-                    Confirm password
-                    <input
-                      autoComplete="new-password"
-                      className="text-input"
-                      minLength={8}
-                      onChange={(event) => setConfirmPassword(event.target.value)}
-                      placeholder="Re-enter password"
-                      required
-                      type="password"
-                      value={confirmPassword}
-                    />
-                  </label>
-                </div>
-
-                <div className="button-row">
-                  <button className="button-ghost" onClick={handleBack} type="button">
-                    Back
-                  </button>
-                  <button className="button-primary" disabled={isSubmitting} type="submit">
-                    {isSubmitting ? "Creating Account..." : "Create Account"}
-                  </button>
-                </div>
-              </form>
-            ) : null}
-
             <div className="auth-compact-footer">
               <p className="fine-print">
-                Accounts are stored in the local backend SQLite database for this
-                workspace. This is still a lightweight local auth experience, not a
-                cloud identity provider.
+                This public demo uses fixed backend-managed accounts and live-session
+                quotas to reduce API abuse while the project is still in demo stage.
               </p>
             </div>
           </article>

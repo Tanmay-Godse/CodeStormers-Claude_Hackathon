@@ -299,6 +299,9 @@ def test_knowledge_service_falls_back_when_ai_request_fails(monkeypatch) -> None
     )
 
     assert "knowledge lab" in response.title.lower()
+    assert response.study_mode == "current_procedure"
+    assert response.topic_title
+    assert len(response.topic_suggestions) >= 4
     assert len(response.rapidfire_rounds) == 5
     assert len(response.quiz_questions) == 5
     assert len(response.flashcards) == 6
@@ -310,10 +313,20 @@ def test_knowledge_service_backfills_partial_ai_payload(monkeypatch) -> None:
         knowledge_service,
         "send_json_message",
         lambda **_: {
+            "study_mode": "related_topics",
+            "topic_title": "Needle Angle",
             "title": "Needle Entry Sprint",
             "summary": "Quick review pack.",
             "recommended_focus": "entry angle",
             "celebration_line": "Nice round.",
+            "topic_suggestions": [
+                {
+                    "id": "needle-angle",
+                    "label": "Needle Angle",
+                    "description": "Practice confident entry and exit angles that stay visible.",
+                    "study_mode": "related_topics",
+                }
+            ],
             "rapidfire_rounds": [
                 {
                     "id": "rapid-1",
@@ -353,7 +366,10 @@ def test_knowledge_service_backfills_partial_ai_payload(monkeypatch) -> None:
     )
 
     assert response.title == "Needle Entry Sprint"
+    assert response.study_mode == "related_topics"
+    assert response.topic_title == "Needle Angle"
     assert response.summary == "Quick review pack."
+    assert len(response.topic_suggestions) >= 4
     assert len(response.rapidfire_rounds) == 5
     assert len(response.quiz_questions) == 5
     assert len(response.flashcards) == 6

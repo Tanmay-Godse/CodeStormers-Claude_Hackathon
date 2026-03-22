@@ -2,7 +2,9 @@ from fastapi import APIRouter, HTTPException, Query, status
 
 from app.schemas.auth import (
     AuthAccountPreview,
+    ConsumeLiveSessionRequest,
     CreateAuthAccountRequest,
+    ResetLiveSessionLimitRequest,
     ResolveAdminRequest,
     SignInAuthRequest,
     UpdateAuthAccountRequest,
@@ -43,6 +45,8 @@ def create_auth_account(
 ) -> AuthAccountPreview:
     try:
         return auth_service.create_auth_account(payload)
+    except AuthPermissionError as exc:
+        raise HTTPException(status_code=403, detail=str(exc)) from exc
     except AuthAccountConflictError as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from exc
     except AuthValidationError as exc:
@@ -83,9 +87,13 @@ def update_auth_account(
 @router.get("/auth/admin-requests", response_model=list[AuthAccountPreview])
 def list_pending_admin_requests(
     developer_account_id: str = Query(min_length=3),
+    developer_session_token: str = Query(min_length=16),
 ) -> list[AuthAccountPreview]:
     try:
-        return auth_service.list_pending_admin_requests(developer_account_id)
+        return auth_service.list_pending_admin_requests(
+            developer_account_id,
+            developer_session_token,
+        )
     except AuthAccountNotFoundError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
     except AuthPermissionError as exc:
@@ -108,6 +116,56 @@ def approve_admin_request(
             payload=payload,
             approved=True,
         )
+    except AuthAccountNotFoundError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except AuthPermissionError as exc:
+        raise HTTPException(status_code=403, detail=str(exc)) from exc
+    except AuthValidationError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@router.get("/auth/demo-accounts", response_model=list[AuthAccountPreview])
+def list_demo_accounts(
+    actor_account_id: str = Query(min_length=3),
+    actor_session_token: str = Query(min_length=16),
+) -> list[AuthAccountPreview]:
+    try:
+        return auth_service.list_live_session_accounts(
+            actor_account_id,
+            actor_session_token,
+        )
+    except AuthAccountNotFoundError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except AuthPermissionError as exc:
+        raise HTTPException(status_code=403, detail=str(exc)) from exc
+    except AuthValidationError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@router.post("/auth/live-sessions/consume", response_model=AuthAccountPreview)
+def consume_live_session(
+    payload: ConsumeLiveSessionRequest,
+) -> AuthAccountPreview:
+    try:
+        return auth_service.consume_live_session(payload)
+    except AuthAccountNotFoundError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except AuthPermissionError as exc:
+        raise HTTPException(status_code=403, detail=str(exc)) from exc
+    except AuthValidationError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@router.post(
+    "/auth/accounts/{account_id}/reset-live-sessions",
+    response_model=AuthAccountPreview,
+)
+def reset_live_session_limit(
+    account_id: str,
+    payload: ResetLiveSessionLimitRequest,
+) -> AuthAccountPreview:
+    try:
+        return auth_service.reset_live_session_limit(account_id, payload)
     except AuthAccountNotFoundError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
     except AuthPermissionError as exc:

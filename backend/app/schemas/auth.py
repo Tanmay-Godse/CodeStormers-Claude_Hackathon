@@ -13,8 +13,13 @@ class AuthAccountPreview(BaseModel):
     username: str
     role: Literal["student", "admin"]
     is_developer: bool = False
+    is_seeded: bool = False
     requested_role: Literal["admin"] | None = None
     admin_approval_status: AdminApprovalStatus = "none"
+    live_session_limit: int | None = None
+    live_session_used: int = 0
+    live_session_remaining: int | None = None
+    session_token: str | None = None
     created_at: str
 
 
@@ -48,3 +53,18 @@ class ResolveAdminRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     developer_account_id: str
+    developer_session_token: str
+
+
+class ConsumeLiveSessionRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    account_id: str
+    session_token: str
+
+
+class ResetLiveSessionLimitRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    actor_account_id: str
+    actor_session_token: str

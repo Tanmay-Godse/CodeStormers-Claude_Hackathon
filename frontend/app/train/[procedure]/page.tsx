@@ -32,6 +32,7 @@ import { analyzeFrame, coachChat, getProcedure } from "@/lib/api";
 import { createDefaultCalibration } from "@/lib/geometry";
 import {
   clearAuthUser,
+  consumeAuthLiveSession,
   createDefaultEquityMode,
   getAuthUser,
   getOrCreateActiveSession,
@@ -345,6 +346,9 @@ export default function TrainProcedurePage() {
   const [isOnline, setIsOnline] = useState(true);
   const [voiceSessionStatus, setVoiceSessionStatus] =
     useState<VoiceSessionStatus>("idle");
+  const [liveSessionAccessError, setLiveSessionAccessError] = useState<string | null>(
+    null,
+  );
   const [demoSessionExpired, setDemoSessionExpired] = useState(false);
   const [demoTimeRemainingMs, setDemoTimeRemainingMs] = useState(
     DEMO_CAMERA_SESSION_LIMIT_MS,
@@ -507,13 +511,33 @@ export default function TrainProcedurePage() {
   );
   const voiceChatEnabled = cameraReady && equityMode.audioCoaching;
   const captureProfileLabel = "Standard capture";
+  const hasLiveSessionLimitReached = Boolean(
+    authUser &&
+      authUser.liveSessionLimit !== null &&
+      (authUser.liveSessionRemaining ?? 0) <= 0,
+  );
   const cameraToggleLabel = cameraReady
     ? "Stop Camera"
+    : hasLiveSessionLimitReached
+      ? "Live Session Limit Reached"
     : cameraStatus.state === "requesting"
       ? "Connecting Camera..."
       : cameraStatus.canRetry && cameraStatus.state !== "idle"
         ? "Retry Camera"
         : "Start Camera";
+  const liveSessionQuotaLabel = useMemo(() => {
+    if (!authUser) {
+      return null;
+    }
+
+    if (authUser.liveSessionLimit === null) {
+      return authUser.isDeveloper
+        ? "Developer access"
+        : "Admin access";
+    }
+
+    return `${authUser.liveSessionRemaining ?? 0} of ${authUser.liveSessionLimit} live runs left`;
+  }, [authUser]);
   const liveStageConfidence = useMemo(() => {
     if (!feedback || feedbackStageId !== currentStageId) {
       return null;
@@ -672,11 +696,43 @@ export default function TrainProcedurePage() {
     }
 
     if (camera.hasLiveStream()) {
+      setLiveSessionAccessError(null);
       camera.stopCamera();
       return;
     }
 
-    await camera.startCamera();
+    if (
+      hasLiveSessionLimitReached
+    ) {
+      setLiveSessionAccessError(
+        "This demo account has used all 10 live sessions. Please ask an admin or the developer team to reset the limit.",
+      );
+      return;
+    }
+
+    try {
+      await camera.startCamera();
+    } catch (error) {
+      setLiveSessionAccessError(
+        error instanceof Error
+          ? error.message
+          : "The camera could not be started right now.",
+      );
+      return;
+    }
+
+    try {
+      const nextUser = await consumeAuthLiveSession();
+      setAuthUser(nextUser);
+      setLiveSessionAccessError(null);
+    } catch (error) {
+      const nextMessage =
+        error instanceof Error
+          ? error.message
+          : "This account could not start another live session.";
+      setLiveSessionAccessError(nextMessage);
+      camera.stopCamera(nextMessage);
+    }
   }
 
   function handleSkillLevelChange(nextSkillLevel: SkillLevel) {
@@ -753,6 +809,7 @@ export default function TrainProcedurePage() {
     setSimulationConfirmed(true);
     autoSetupAnalysisAttemptedRef.current = false;
     setAnalyzeError(null);
+    setLiveSessionAccessError(null);
     setActiveWorkspacePanel("checklist");
   }
 
@@ -1611,19 +1668,24 @@ export default function TrainProcedurePage() {
             </span>
             <span className="pill">{captureProfileLabel}</span>
             <span className={`pill ${demoTimerTone}`}>{demoTimerLabel}</span>
+            {liveSessionQuotaLabel ? <span className="pill">{liveSessionQuotaLabel}</span> : null}
             <span className="pill">
               {simulationConfirmed ? "simulation confirmed" : "simulation only"}
             </span>
           </div>
           <p className="trainer-session-note">
-            Keep the surface centered and use Check My Step when the frame looks ready.
+            {liveSessionAccessError ??
+              "Keep the surface centered and use Check My Step when the frame looks ready."}
           </p>
         </div>
 
         <div className="trainer-session-hero-actions">
           <button
             className="button-primary trainer-session-action"
-            disabled={cameraStatus.state === "requesting"}
+            disabled={
+              cameraStatus.state === "requesting" ||
+              (!cameraReady && hasLiveSessionLimitReached)
+            }
             onClick={() => void handleCameraToggle()}
             type="button"
           >

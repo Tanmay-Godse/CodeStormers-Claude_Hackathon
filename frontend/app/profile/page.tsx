@@ -11,9 +11,12 @@ import {
 } from "@/lib/appShell";
 import {
   clearAuthUser,
+  listManageableDemoAccounts,
   refreshAuthUser,
+  resetManagedDemoAccountQuota,
   updateAuthUserProfile,
 } from "@/lib/storage";
+import type { AuthUser } from "@/lib/types";
 import { useWorkspaceUser } from "@/lib/useWorkspaceUser";
 
 export default function ProfilePage() {
@@ -27,6 +30,9 @@ export default function ProfilePage() {
   const [error, setError] = useState<string | null>(null);
   const [successMessage, setSuccessMessage] = useState<string | null>(null);
   const [isSaving, setIsSaving] = useState(false);
+  const [managedAccounts, setManagedAccounts] = useState<AuthUser[]>([]);
+  const [quotaError, setQuotaError] = useState<string | null>(null);
+  const [activeResetId, setActiveResetId] = useState<string | null>(null);
 
   useEffect(() => {
     if (hydrated && !user) {
@@ -62,6 +68,39 @@ export default function ProfilePage() {
       cancelled = true;
     };
   }, [hydrated, sync, user]);
+
+  useEffect(() => {
+    if (!hydrated || !user || (!user.isDeveloper && user.role !== "admin")) {
+      setManagedAccounts([]);
+      setQuotaError(null);
+      return;
+    }
+
+    let cancelled = false;
+
+    async function loadManagedAccounts() {
+      try {
+        const accounts = await listManageableDemoAccounts();
+        if (!cancelled) {
+          setManagedAccounts(accounts);
+        }
+      } catch (loadError) {
+        if (!cancelled) {
+          setQuotaError(
+            loadError instanceof Error
+              ? loadError.message
+              : "The live-session quota list could not be loaded.",
+          );
+        }
+      }
+    }
+
+    void loadManagedAccounts();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [hydrated, user]);
 
   const latestReviewHref = useMemo(() => {
     const latestSession = sessions[0];
@@ -145,6 +184,38 @@ export default function ProfilePage() {
     }
   }
 
+  async function handleResetQuota(accountId: string) {
+    if (!user?.sessionToken) {
+      setQuotaError("Sign in again before resetting demo limits.");
+      return;
+    }
+
+    setActiveResetId(accountId);
+    setQuotaError(null);
+
+    try {
+      const updated = await resetManagedDemoAccountQuota(accountId, {
+        actorAccountId: user.accountId,
+        actorSessionToken: user.sessionToken,
+      });
+
+      setManagedAccounts((current) =>
+        current.map((account) =>
+          account.accountId === accountId ? updated : account,
+        ),
+      );
+      sync();
+    } catch (resetError) {
+      setQuotaError(
+        resetError instanceof Error
+          ? resetError.message
+          : "The live-session limit could not be reset.",
+      );
+    } finally {
+      setActiveResetId(null);
+    }
+  }
+
   if (!hydrated || !user) {
     return (
       <AppFrame
@@ -163,6 +234,12 @@ export default function ProfilePage() {
 
   const reviewCount = sessions.filter((session) => session.debrief).length;
   const voiceSessions = sessions.filter((session) => session.equityMode.audioCoaching).length;
+  const liveSessionLabel =
+    user.liveSessionLimit === null
+      ? user.isDeveloper
+        ? "Unlimited"
+        : "Admin access"
+      : `${user.liveSessionRemaining ?? 0} / ${user.liveSessionLimit}`;
 
   return (
     <AppFrame
@@ -224,9 +301,13 @@ export default function ProfilePage() {
           <p>Saved debriefs.</p>
         </article>
         <article className="dashboard-card dashboard-kpi-card">
-          <span>Voice Sessions</span>
-          <strong>{voiceSessions}</strong>
-          <p>Hands-free guided runs.</p>
+          <span>Live Sessions Left</span>
+          <strong>{liveSessionLabel}</strong>
+          <p>
+            {user.liveSessionLimit === null
+              ? "Managed access account."
+              : `${voiceSessions} voice-guided runs saved.`}
+          </p>
         </article>
       </section>
 
@@ -239,15 +320,16 @@ export default function ProfilePage() {
                 <h2>Workspace details</h2>
               </div>
             </div>
-            {user.isDeveloper ? (
+            {user.isDeveloper || user.isSeeded ? (
               <div className="feedback-block">
                 <div className="feedback-header">
-                  <strong>Fixed developer account</strong>
-                  <span className="pill">managed</span>
+                  <strong>{user.isDeveloper ? "Fixed developer account" : "Managed demo account"}</strong>
+                  <span className="pill">read only</span>
                 </div>
                 <p className="feedback-copy" style={{ marginTop: 12 }}>
-                  This account stays fixed so the developer approval workflow always
-                  uses the same shared login.
+                  {user.isDeveloper
+                    ? "This account stays fixed so the developer approval workflow always uses the same shared login."
+                    : "This seeded demo account stays fixed so the public login list and live-session quota rules remain stable during judging."}
                 </p>
               </div>
             ) : (
@@ -344,6 +426,55 @@ export default function ProfilePage() {
         </div>
 
         <div className="dashboard-right-column">
+          {(user.isDeveloper || user.role === "admin") ? (
+            <article className="dashboard-card dashboard-session-card">
+              <div className="dashboard-card-header">
+                <div>
+                  <span className="dashboard-card-eyebrow">Live Session Limits</span>
+                  <h2>Reset demo account quotas</h2>
+                </div>
+              </div>
+              <p className="panel-copy">
+                Admin and developer accounts can reset the 10-session demo cap when a
+                judge or teammate needs another guided run.
+              </p>
+              {quotaError ? (
+                <div className="feedback-block" style={{ marginTop: 16 }}>
+                  <div className="feedback-header">
+                    <strong>Quota management issue</strong>
+                  </div>
+                  <p className="feedback-copy" style={{ marginTop: 10 }}>
+                    {quotaError}
+                  </p>
+                </div>
+              ) : null}
+              <div className="dashboard-progress-list" style={{ marginTop: 16 }}>
+                {managedAccounts.map((account) => (
+                  <article className="dashboard-progress-item" key={account.accountId}>
+                    <div className="dashboard-progress-copy">
+                      <strong>{account.name}</strong>
+                      <span>{account.username}</span>
+                      <p>
+                        {typeof account.liveSessionRemaining === "number" &&
+                        typeof account.liveSessionLimit === "number"
+                          ? `${account.liveSessionRemaining} of ${account.liveSessionLimit} live runs left`
+                          : "Uncapped account"}
+                      </p>
+                    </div>
+                    <button
+                      className="button-secondary"
+                      disabled={activeResetId === account.accountId}
+                      onClick={() => void handleResetQuota(account.accountId)}
+                      type="button"
+                    >
+                      {activeResetId === account.accountId ? "Resetting..." : "Reset"}
+                    </button>
+                  </article>
+                ))}
+              </div>
+            </article>
+          ) : null}
+
           {accessStatus ? (
             <article className="dashboard-card dashboard-session-card">
               <div className="dashboard-card-header">

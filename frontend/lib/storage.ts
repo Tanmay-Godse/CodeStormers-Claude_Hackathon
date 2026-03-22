@@ -1,7 +1,10 @@
 import { createDefaultCalibration } from "@/lib/geometry";
 import {
+  consumeLiveSessionAllowance,
   createPersistedAuthAccount,
+  listDemoAccounts,
   previewPersistedAuthAccount,
+  resetDemoAccountQuota,
   signInPersistedAuthAccount,
   updatePersistedAuthAccount,
   type PersistedAuthAccount,
@@ -11,6 +14,7 @@ import type {
   CoachVoicePreset,
   CreateAuthAccountInput,
   DebriefResponse,
+  DemoAccountQuotaResetInput,
   EquityModeSettings,
   LearnerProfileSnapshot,
   LoginAuthInput,
@@ -194,8 +198,13 @@ function toAuthUser(account: PersistedAuthAccount): AuthUser {
     username: account.username,
     role: account.role,
     isDeveloper: account.isDeveloper,
+    isSeeded: account.isSeeded,
     requestedRole: account.requestedRole ?? null,
     adminApprovalStatus: account.adminApprovalStatus,
+    liveSessionLimit: account.liveSessionLimit ?? null,
+    liveSessionUsed: account.liveSessionUsed,
+    liveSessionRemaining: account.liveSessionRemaining ?? null,
+    sessionToken: account.sessionToken ?? null,
     createdAt: new Date().toISOString(),
   };
 }
@@ -382,8 +391,13 @@ export async function refreshAuthUser(): Promise<AuthUser | null> {
     username: account.username,
     role: account.role,
     isDeveloper: account.isDeveloper,
+    isSeeded: account.isSeeded,
     requestedRole: account.requestedRole ?? null,
     adminApprovalStatus: account.adminApprovalStatus,
+    liveSessionLimit: account.liveSessionLimit ?? null,
+    liveSessionUsed: account.liveSessionUsed,
+    liveSessionRemaining: account.liveSessionRemaining ?? null,
+    sessionToken: currentUser.sessionToken ?? account.sessionToken ?? null,
   });
 }
 
@@ -424,8 +438,13 @@ export async function updateAuthUserProfile(
     username: account.username,
     role: account.role,
     isDeveloper: account.isDeveloper,
+    isSeeded: account.isSeeded,
     requestedRole: account.requestedRole ?? null,
     adminApprovalStatus: account.adminApprovalStatus,
+    liveSessionLimit: account.liveSessionLimit ?? null,
+    liveSessionUsed: account.liveSessionUsed,
+    liveSessionRemaining: account.liveSessionRemaining ?? null,
+    sessionToken: currentUser.sessionToken ?? account.sessionToken ?? null,
   });
 }
 
@@ -436,8 +455,12 @@ export async function previewAuthAccount(
   role: AuthUser["role"];
   username: string;
   isDeveloper: boolean;
+  isSeeded: boolean;
   requestedRole?: "admin" | null;
   adminApprovalStatus: AuthUser["adminApprovalStatus"];
+  liveSessionLimit?: number | null;
+  liveSessionUsed: number;
+  liveSessionRemaining?: number | null;
 } | null> {
   ensureBrowserStorage();
 
@@ -457,8 +480,120 @@ export async function previewAuthAccount(
     role: account.role,
     username: account.username,
     isDeveloper: account.isDeveloper,
+    isSeeded: account.isSeeded,
     requestedRole: account.requestedRole ?? null,
     adminApprovalStatus: account.adminApprovalStatus,
+    liveSessionLimit: account.liveSessionLimit ?? null,
+    liveSessionUsed: account.liveSessionUsed,
+    liveSessionRemaining: account.liveSessionRemaining ?? null,
+  };
+}
+
+export async function consumeAuthLiveSession(): Promise<AuthUser> {
+  ensureBrowserStorage();
+
+  const currentUser = getAuthUser();
+  if (!currentUser?.sessionToken) {
+    throw new Error("Sign in again before starting another live session.");
+  }
+
+  const account = await consumeLiveSessionAllowance({
+    accountId: currentUser.accountId,
+    sessionToken: currentUser.sessionToken,
+  });
+
+  return persistAuthUser({
+    ...currentUser,
+    accountId: account.id,
+    name: account.name,
+    username: account.username,
+    role: account.role,
+    isDeveloper: account.isDeveloper,
+    isSeeded: account.isSeeded,
+    requestedRole: account.requestedRole ?? null,
+    adminApprovalStatus: account.adminApprovalStatus,
+    liveSessionLimit: account.liveSessionLimit ?? null,
+    liveSessionUsed: account.liveSessionUsed,
+    liveSessionRemaining: account.liveSessionRemaining ?? null,
+    sessionToken: currentUser.sessionToken ?? account.sessionToken ?? null,
+  });
+}
+
+export async function listManageableDemoAccounts(): Promise<AuthUser[]> {
+  ensureBrowserStorage();
+
+  const currentUser = getAuthUser();
+  if (!currentUser?.sessionToken) {
+    throw new Error("Sign in again before managing live-session limits.");
+  }
+  if (!currentUser.isDeveloper && currentUser.role !== "admin") {
+    throw new Error("Only admin or developer accounts can manage live-session limits.");
+  }
+
+  const accounts = await listDemoAccounts(
+    currentUser.accountId,
+    currentUser.sessionToken,
+  );
+
+  return accounts.map((account) => ({
+    id: crypto.randomUUID(),
+    accountId: account.id,
+    name: account.name,
+    username: account.username,
+    role: account.role,
+    isDeveloper: account.isDeveloper,
+    isSeeded: account.isSeeded,
+    requestedRole: account.requestedRole ?? null,
+    adminApprovalStatus: account.adminApprovalStatus,
+    liveSessionLimit: account.liveSessionLimit ?? null,
+    liveSessionUsed: account.liveSessionUsed,
+    liveSessionRemaining: account.liveSessionRemaining ?? null,
+    sessionToken: null,
+    createdAt: account.createdAt,
+  }));
+}
+
+export async function resetManagedDemoAccountQuota(
+  accountId: string,
+  input: DemoAccountQuotaResetInput,
+): Promise<AuthUser> {
+  ensureBrowserStorage();
+
+  const account = await resetDemoAccountQuota(accountId, input);
+  const currentUser = getAuthUser();
+
+  if (currentUser && currentUser.accountId === account.id) {
+    persistAuthUser({
+      ...currentUser,
+      name: account.name,
+      username: account.username,
+      role: account.role,
+      isDeveloper: account.isDeveloper,
+      isSeeded: account.isSeeded,
+      requestedRole: account.requestedRole ?? null,
+      adminApprovalStatus: account.adminApprovalStatus,
+      liveSessionLimit: account.liveSessionLimit ?? null,
+      liveSessionUsed: account.liveSessionUsed,
+      liveSessionRemaining: account.liveSessionRemaining ?? null,
+      sessionToken: currentUser.sessionToken ?? account.sessionToken ?? null,
+    });
+  }
+
+  return {
+    id: crypto.randomUUID(),
+    accountId: account.id,
+    name: account.name,
+    username: account.username,
+    role: account.role,
+    isDeveloper: account.isDeveloper,
+    isSeeded: account.isSeeded,
+    requestedRole: account.requestedRole ?? null,
+    adminApprovalStatus: account.adminApprovalStatus,
+    liveSessionLimit: account.liveSessionLimit ?? null,
+    liveSessionUsed: account.liveSessionUsed,
+    liveSessionRemaining: account.liveSessionRemaining ?? null,
+    sessionToken: null,
+    createdAt: account.createdAt,
   };
 }
 
@@ -500,12 +635,27 @@ export function getAuthUser(): AuthUser | null {
           : normalizeUsername(parsed.name),
       role: parsed.role,
       isDeveloper: parsed.isDeveloper === true,
+      isSeeded: parsed.isSeeded === true,
       requestedRole: parsed.requestedRole === "admin" ? "admin" : null,
       adminApprovalStatus:
         parsed.adminApprovalStatus === "pending" ||
         parsed.adminApprovalStatus === "rejected"
           ? parsed.adminApprovalStatus
           : "none",
+      liveSessionLimit:
+        typeof parsed.liveSessionLimit === "number" ? parsed.liveSessionLimit : null,
+      liveSessionUsed:
+        typeof parsed.liveSessionUsed === "number" ? parsed.liveSessionUsed : 0,
+      liveSessionRemaining:
+        typeof parsed.liveSessionRemaining === "number"
+          ? parsed.liveSessionRemaining
+          : typeof parsed.liveSessionLimit === "number"
+            ? parsed.liveSessionLimit
+            : null,
+      sessionToken:
+        typeof parsed.sessionToken === "string" && parsed.sessionToken.trim()
+          ? parsed.sessionToken
+          : null,
       createdAt: parsed.createdAt,
     };
   } catch {

@@ -11,6 +11,8 @@ import { clearAuthUser } from "@/lib/storage";
 import type {
   FeedbackLanguage,
   KnowledgePackResponse,
+  KnowledgeStudyMode,
+  KnowledgeTopicSuggestion,
   SessionRecord,
   SkillLevel,
 } from "@/lib/types";
@@ -40,6 +42,24 @@ const defaultKnowledgeProgress: KnowledgeProgress = {
   perfectRounds: 0,
   rapidfireBestStreak: 0,
   totalPoints: 0,
+};
+
+const KNOWLEDGE_LANE_META: Record<
+  KnowledgeStudyMode,
+  { description: string; label: string }
+> = {
+  current_procedure: {
+    label: "Current Procedure",
+    description: "Stay close to the live suturing rubric and stage goals.",
+  },
+  related_topics: {
+    label: "Related Topics",
+    description: "Learn adjacent concepts that improve the next live rep.",
+  },
+  common_mistakes: {
+    label: "Common Mistakes",
+    description: "Practice spotting misses and the best reset for them.",
+  },
 };
 
 function progressKey(username: string) {
@@ -138,6 +158,70 @@ function deriveLatestLanguage(sessions: SessionRecord[]): FeedbackLanguage {
   return sessions[0]?.equityMode.feedbackLanguage ?? "en";
 }
 
+function buildDefaultTopicSuggestions(
+  recentIssueLabels: string[],
+): KnowledgeTopicSuggestion[] {
+  const suggestions: KnowledgeTopicSuggestion[] = [];
+
+  for (const [index, label] of recentIssueLabels.slice(0, 2).entries()) {
+    suggestions.push({
+      id: `recent-${index + 1}`,
+      label,
+      description: "Review a repeated miss from recent practice before the next live run.",
+      study_mode: "common_mistakes",
+    });
+  }
+
+  suggestions.push(
+    {
+      id: "procedure-overview",
+      label: "Procedure Overview",
+      description: "Review how the whole rep flows from setup to final check.",
+      study_mode: "current_procedure",
+    },
+    {
+      id: "stage-goals",
+      label: "Stage Goals",
+      description: "Focus on what each stage is actually scored on.",
+      study_mode: "current_procedure",
+    },
+    {
+      id: "needle-angle",
+      label: "Needle Angle",
+      description: "Practice confident entry and exit angles that stay visible.",
+      study_mode: "related_topics",
+    },
+    {
+      id: "instrument-grip",
+      label: "Instrument Grip",
+      description: "Review steady handling before entry and pull-through.",
+      study_mode: "related_topics",
+    },
+    {
+      id: "camera-framing",
+      label: "Camera Framing",
+      description: "Keep the field centered, visible, and easy to judge.",
+      study_mode: "related_topics",
+    },
+    {
+      id: "error-spotting",
+      label: "Error Spotting",
+      description: "Train yourself to recognize common misses earlier.",
+      study_mode: "common_mistakes",
+    },
+  );
+
+  const seen = new Set<string>();
+  return suggestions.filter((suggestion) => {
+    const key = suggestion.label.toLowerCase();
+    if (seen.has(key)) {
+      return false;
+    }
+    seen.add(key);
+    return true;
+  });
+}
+
 function resetRapidfireState() {
   return {
     bestStreak: 0,
@@ -167,6 +251,8 @@ export default function KnowledgePage() {
   const [packError, setPackError] = useState<string | null>(null);
   const [isPackLoading, setIsPackLoading] = useState(false);
   const [activeTab, setActiveTab] = useState<KnowledgeTab>("rapidfire");
+  const [studyMode, setStudyMode] = useState<KnowledgeStudyMode>("current_procedure");
+  const [selectedTopic, setSelectedTopic] = useState("");
   const [progress, setProgress] = useState<KnowledgeProgress>(defaultKnowledgeProgress);
   const [rapidfireState, setRapidfireState] = useState(resetRapidfireState);
   const [quizState, setQuizState] = useState(resetQuizState);
@@ -197,6 +283,10 @@ export default function KnowledgePage() {
   const focusArea = recentIssueLabels[0] ?? "needle entry consistency";
   const latestSkillLevel = useMemo(() => deriveLatestSkillLevel(sessions), [sessions]);
   const latestLanguage = useMemo(() => deriveLatestLanguage(sessions), [sessions]);
+  const defaultTopicSuggestions = useMemo(
+    () => buildDefaultTopicSuggestions(recentIssueLabels),
+    [recentIssueLabels],
+  );
 
   const updateProgress = useCallback(
     (mutator: (previous: KnowledgeProgress) => KnowledgeProgress) => {
@@ -221,45 +311,67 @@ export default function KnowledgePage() {
     setFlashcardsKnown([]);
   }
 
-  async function loadKnowledgePack() {
-    if (!user) {
-      return;
-    }
-
-    const requestId = knowledgeRequestIdRef.current + 1;
-    knowledgeRequestIdRef.current = requestId;
-    setIsPackLoading(true);
-    setPackError(null);
-
-    try {
-      const nextPack = await generateKnowledgePack({
-        procedure_id: KNOWLEDGE_PROCEDURE_ID,
-        skill_level: latestSkillLevel,
-        feedback_language: latestLanguage,
-        learner_name: user.name,
-        focus_area: focusArea,
-        recent_issue_labels: recentIssueLabels,
-      });
-      if (knowledgeRequestIdRef.current !== requestId) {
+  const loadKnowledgePack = useCallback(
+    async (
+      overrides?: Partial<{
+        selectedTopic: string;
+        studyMode: KnowledgeStudyMode;
+      }>,
+    ) => {
+      if (!user) {
         return;
       }
-      setKnowledgePack(nextPack);
-      resetInteractiveState();
-    } catch (error) {
-      if (knowledgeRequestIdRef.current !== requestId) {
-        return;
+
+      const nextStudyMode = overrides?.studyMode ?? studyMode;
+      const nextSelectedTopic = overrides?.selectedTopic ?? selectedTopic;
+      const requestId = knowledgeRequestIdRef.current + 1;
+      knowledgeRequestIdRef.current = requestId;
+      setIsPackLoading(true);
+      setPackError(null);
+
+      try {
+        const nextPack = await generateKnowledgePack({
+          procedure_id: KNOWLEDGE_PROCEDURE_ID,
+          skill_level: latestSkillLevel,
+          feedback_language: latestLanguage,
+          learner_name: user.name,
+          focus_area: nextSelectedTopic || focusArea,
+          study_mode: nextStudyMode,
+          selected_topic: nextSelectedTopic || undefined,
+          recent_issue_labels: recentIssueLabels,
+        });
+        if (knowledgeRequestIdRef.current !== requestId) {
+          return;
+        }
+        setKnowledgePack(nextPack);
+        setStudyMode(nextPack.study_mode);
+        setSelectedTopic(nextPack.topic_title);
+        resetInteractiveState();
+      } catch (error) {
+        if (knowledgeRequestIdRef.current !== requestId) {
+          return;
+        }
+        setPackError(
+          error instanceof Error
+            ? error.message
+            : "Knowledge lab is unavailable right now. Try again in a moment.",
+        );
+      } finally {
+        if (knowledgeRequestIdRef.current === requestId) {
+          setIsPackLoading(false);
+        }
       }
-      setPackError(
-        error instanceof Error
-          ? error.message
-          : "Knowledge lab is unavailable right now. Try again in a moment.",
-      );
-    } finally {
-      if (knowledgeRequestIdRef.current === requestId) {
-        setIsPackLoading(false);
-      }
-    }
-  }
+    },
+    [
+      focusArea,
+      latestLanguage,
+      latestSkillLevel,
+      recentIssueLabels,
+      selectedTopic,
+      studyMode,
+      user,
+    ],
+  );
 
   useEffect(() => {
     if (!user) {
@@ -267,8 +379,7 @@ export default function KnowledgePage() {
     }
 
     void loadKnowledgePack();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [user]);
+  }, [loadKnowledgePack, user]);
 
   useEffect(() => {
     return () => {
@@ -279,11 +390,13 @@ export default function KnowledgePage() {
   const rapidfireQuestions = knowledgePack?.rapidfire_rounds ?? [];
   const quizQuestions = knowledgePack?.quiz_questions ?? [];
   const flashcards = knowledgePack?.flashcards ?? [];
+  const topicSuggestions = knowledgePack?.topic_suggestions ?? defaultTopicSuggestions;
   const currentRapidfireQuestion =
     rapidfireQuestions[rapidfireState.index] ?? null;
   const currentQuizQuestion = quizQuestions[quizState.index] ?? null;
   const currentFlashcard = flashcards[flashcardIndex] ?? null;
   const rating = ratingFromPoints(progress.totalPoints);
+  const activeTopicLabel = selectedTopic || knowledgePack?.topic_title || focusArea;
   const accuracyPercent =
     progress.answeredCount > 0
       ? Math.round((progress.correctCount / progress.answeredCount) * 100)
@@ -344,6 +457,21 @@ export default function KnowledgePage() {
   function handleLogout() {
     clearAuthUser();
     router.push("/login");
+  }
+
+  function handleStudyModeChange(nextMode: KnowledgeStudyMode) {
+    setStudyMode(nextMode);
+    setSelectedTopic("");
+    void loadKnowledgePack({ selectedTopic: "", studyMode: nextMode });
+  }
+
+  function handleTopicSelect(topic: KnowledgeTopicSuggestion) {
+    setStudyMode(topic.study_mode);
+    setSelectedTopic(topic.label);
+    void loadKnowledgePack({
+      selectedTopic: topic.label,
+      studyMode: topic.study_mode,
+    });
   }
 
   function startRapidfire() {
@@ -529,16 +657,16 @@ export default function KnowledgePage() {
       <section className="dashboard-hero knowledge-hero">
         <div>
           <span className="dashboard-kicker">Knowledge Lab</span>
-          <h1>Learn fast, test yourself, then take it back into the trainer.</h1>
+          <h1>Study the procedure, related concepts, or common mistakes in one place.</h1>
           <p>
-            This mode uses Claude to build a quick study pack around your current
-            procedure, with rapid-fire rounds, a deeper quiz, and flashcards you can
-            flip through at your own pace.
+            Use quick rounds, a deeper quiz, and flashcards to strengthen the next live
+            session. You can stay close to the procedure or branch into related topics
+            that still improve your suturing reps.
           </p>
         </div>
         <div className="dashboard-hero-meta">
           <span>{rating}</span>
-          <span>{focusArea}</span>
+          <span>{activeTopicLabel}</span>
           <button
             className="dashboard-action-pill is-strong"
             onClick={() => void loadKnowledgePack()}
@@ -599,6 +727,12 @@ export default function KnowledgePage() {
             </p>
             <div className="knowledge-chip-row">
               <span className="dashboard-meta-chip">
+                Lane: {KNOWLEDGE_LANE_META[studyMode].label}
+              </span>
+              <span className="dashboard-meta-chip">
+                Topic: {knowledgePack?.topic_title ?? activeTopicLabel}
+              </span>
+              <span className="dashboard-meta-chip">
                 Focus: {knowledgePack?.recommended_focus ?? focusArea}
               </span>
               <span className="dashboard-meta-chip">
@@ -607,6 +741,47 @@ export default function KnowledgePage() {
               <span className="dashboard-meta-chip">
                 Perfect rounds: {progress.perfectRounds}
               </span>
+            </div>
+            <div className="knowledge-lane-row">
+              {(Object.entries(KNOWLEDGE_LANE_META) as Array<
+                [KnowledgeStudyMode, (typeof KNOWLEDGE_LANE_META)[KnowledgeStudyMode]]
+              >).map(([mode, meta]) => (
+                <button
+                  className={`knowledge-lane-pill ${studyMode === mode ? "is-active" : ""}`}
+                  key={mode}
+                  onClick={() => handleStudyModeChange(mode)}
+                  type="button"
+                >
+                  <strong>{meta.label}</strong>
+                  <span>{meta.description}</span>
+                </button>
+              ))}
+            </div>
+            <div className="knowledge-topic-section">
+              <div className="dashboard-card-header">
+                <div>
+                  <span className="dashboard-card-eyebrow">Suggested Topics</span>
+                  <h3>Pick what you want to study next.</h3>
+                </div>
+              </div>
+              <div className="knowledge-suggestion-grid">
+                {topicSuggestions.map((topic) => (
+                  <button
+                    className={`knowledge-suggestion-card ${
+                      activeTopicLabel === topic.label ? "is-active" : ""
+                    }`}
+                    key={topic.id}
+                    onClick={() => handleTopicSelect(topic)}
+                    type="button"
+                  >
+                    <span className="dashboard-card-eyebrow">
+                      {KNOWLEDGE_LANE_META[topic.study_mode].label}
+                    </span>
+                    <strong>{topic.label}</strong>
+                    <p>{topic.description}</p>
+                  </button>
+                ))}
+              </div>
             </div>
             <div className="knowledge-tab-row">
               <button
@@ -925,14 +1100,30 @@ export default function KnowledgePage() {
           <article className="dashboard-card knowledge-side-card">
             <div className="dashboard-card-header">
               <div>
-                <span className="dashboard-card-eyebrow">Why This Helps</span>
-                <h2>Study with the same rubric the trainer uses.</h2>
+                <span className="dashboard-card-eyebrow">Learning Lanes</span>
+                <h2>Use the lab in the way you need today.</h2>
               </div>
             </div>
             <ul className="library-guardrail-list">
-              <li>Rapidfire builds quick recall for stage goals and common misses.</li>
-              <li>The quiz slows down and explains how the frame gets judged.</li>
-              <li>Flashcards help you rehearse the same cues before the next rep.</li>
+              <li>Current Procedure keeps you close to what the trainer will actually grade.</li>
+              <li>Related Topics helps you study adjacent ideas like grip, angle, and framing.</li>
+              <li>Common Mistakes turns recent misses into a focused study target.</li>
+            </ul>
+          </article>
+
+          <article className="dashboard-card knowledge-side-card">
+            <div className="dashboard-card-header">
+              <div>
+                <span className="dashboard-card-eyebrow">Study Suggestions</span>
+                <h2>Good next topics for this learner</h2>
+              </div>
+            </div>
+            <ul className="library-guardrail-list">
+              {topicSuggestions.slice(0, 4).map((topic) => (
+                <li key={`suggestion:${topic.id}`}>
+                  <strong>{topic.label}.</strong> {topic.description}
+                </li>
+              ))}
             </ul>
           </article>
         </div>

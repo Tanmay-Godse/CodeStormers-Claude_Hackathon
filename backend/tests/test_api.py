@@ -32,46 +32,37 @@ def test_health_route() -> None:
     assert response.json() == {"status": "ok", "simulation_only": True}
 
 
-def test_auth_routes_create_preview_and_sign_in_with_sqlite(tmp_path, monkeypatch) -> None:
+def test_demo_student_account_preview_and_sign_in(tmp_path, monkeypatch) -> None:
     monkeypatch.setattr(auth_service, "AUTH_DB_PATH", tmp_path / "auth.db")
-
-    create_response = client.post(
-        "/api/v1/auth/accounts",
-        json={
-            "name": "Student One",
-            "username": "Student01",
-            "password": "supersecure",
-            "role": "student",
-        },
-    )
-
-    assert create_response.status_code == 201
-    created = create_response.json()
-    assert created["username"] == "student01"
-    assert created["name"] == "Student One"
-    assert created["role"] == "student"
 
     preview_response = client.get(
         "/api/v1/auth/accounts/preview",
-        params={"identifier": "student01"},
+        params={"identifier": "Student_1@gmail.com"},
     )
 
     assert preview_response.status_code == 200
-    assert preview_response.json()["name"] == "Student One"
+    preview = preview_response.json()
+    assert preview["username"] == "student_1@gmail.com"
+    assert preview["role"] == "student"
+    assert preview["live_session_limit"] == 10
+    assert preview["live_session_remaining"] == 10
+    assert preview["session_token"] is None
 
     sign_in_response = client.post(
         "/api/v1/auth/sign-in",
         json={
-            "identifier": "Student One",
-            "password": "supersecure",
+            "identifier": "Student_1@gmail.com",
+            "password": "Codestormers",
             "role": "student",
         },
     )
 
     assert sign_in_response.status_code == 200
     signed_in = sign_in_response.json()
-    assert signed_in["id"] == created["id"]
-    assert signed_in["username"] == "student01"
+    assert signed_in["username"] == "student_1@gmail.com"
+    assert signed_in["session_token"]
+    assert signed_in["live_session_used"] == 0
+    assert signed_in["live_session_remaining"] == 10
 
 
 def test_fixed_developer_account_is_seeded_and_reserved(tmp_path, monkeypatch) -> None:
@@ -87,6 +78,7 @@ def test_fixed_developer_account_is_seeded_and_reserved(tmp_path, monkeypatch) -
     assert preview["username"] == "developer@gmail.com"
     assert preview["role"] == "admin"
     assert preview["is_developer"] is True
+    assert preview["live_session_limit"] is None
 
     sign_in_response = client.post(
         "/api/v1/auth/sign-in",
@@ -109,145 +101,108 @@ def test_fixed_developer_account_is_seeded_and_reserved(tmp_path, monkeypatch) -
         },
     )
 
-    assert create_response.status_code == 409
-    assert "reserved" in create_response.json()["detail"].lower()
+    assert create_response.status_code == 403
+    assert "disabled" in create_response.json()["detail"].lower()
 
 
-def test_admin_request_flow_requires_developer_approval(tmp_path, monkeypatch) -> None:
+def test_internal_admin_account_is_seeded_and_can_sign_in(tmp_path, monkeypatch) -> None:
     monkeypatch.setattr(auth_service, "AUTH_DB_PATH", tmp_path / "auth.db")
 
-    create_response = client.post(
-        "/api/v1/auth/accounts",
-        json={
-            "name": "Reviewer Request",
-            "username": "reviewer.request",
-            "password": "supersecure",
-            "role": "admin",
-        },
+    preview_response = client.get(
+        "/api/v1/auth/accounts/preview",
+        params={"identifier": "tanmay@gmail.com"},
     )
 
-    assert create_response.status_code == 201
-    created = create_response.json()
-    assert created["role"] == "student"
-    assert created["requested_role"] == "admin"
-    assert created["admin_approval_status"] == "pending"
+    assert preview_response.status_code == 200
+    preview = preview_response.json()
+    assert preview["role"] == "admin"
+    assert preview["live_session_limit"] == 10
 
-    admin_sign_in = client.post(
+    sign_in_response = client.post(
         "/api/v1/auth/sign-in",
         json={
-            "identifier": "reviewer.request",
-            "password": "supersecure",
+            "identifier": "tanmay@gmail.com",
+            "password": "QwertY@123",
             "role": "admin",
         },
     )
-    assert admin_sign_in.status_code == 409
-    assert "pending" in admin_sign_in.json()["detail"].lower()
+
+    assert sign_in_response.status_code == 200
+    assert sign_in_response.json()["username"] == "tanmay@gmail.com"
+    assert sign_in_response.json()["session_token"]
+
+
+def test_live_session_limit_can_be_consumed_and_reset_by_admin(tmp_path, monkeypatch) -> None:
+    monkeypatch.setattr(auth_service, "AUTH_DB_PATH", tmp_path / "auth.db")
 
     student_sign_in = client.post(
         "/api/v1/auth/sign-in",
         json={
-            "identifier": "reviewer.request",
-            "password": "supersecure",
+            "identifier": "student_1@gmail.com",
+            "password": "Codestormers",
             "role": "student",
         },
     )
     assert student_sign_in.status_code == 200
+    student = student_sign_in.json()
 
-    list_response = client.get(
-        "/api/v1/auth/admin-requests",
-        params={"developer_account_id": auth_service.DEVELOPER_ACCOUNT_ID},
+    consume_response = client.post(
+        "/api/v1/auth/live-sessions/consume",
+        json={
+            "account_id": student["id"],
+            "session_token": student["session_token"],
+        },
     )
-    assert list_response.status_code == 200
-    pending_requests = list_response.json()
-    assert len(pending_requests) == 1
-    assert pending_requests[0]["username"] == "reviewer.request"
+    assert consume_response.status_code == 200
+    assert consume_response.json()["live_session_remaining"] == 9
 
-    approve_response = client.post(
-        f"/api/v1/auth/admin-requests/{created['id']}/approve",
-        json={"developer_account_id": auth_service.DEVELOPER_ACCOUNT_ID},
-    )
-    assert approve_response.status_code == 200
-    approved = approve_response.json()
-    assert approved["role"] == "admin"
-    assert approved["requested_role"] is None
-    assert approved["admin_approval_status"] == "none"
-
-    approved_sign_in = client.post(
+    admin_sign_in = client.post(
         "/api/v1/auth/sign-in",
         json={
-            "identifier": "reviewer.request",
-            "password": "supersecure",
+            "identifier": "tanmay@gmail.com",
+            "password": "QwertY@123",
             "role": "admin",
         },
     )
-    assert approved_sign_in.status_code == 200
+    assert admin_sign_in.status_code == 200
+    admin = admin_sign_in.json()
+
+    list_response = client.get(
+        "/api/v1/auth/demo-accounts",
+        params={
+            "actor_account_id": admin["id"],
+            "actor_session_token": admin["session_token"],
+        },
+    )
+    assert list_response.status_code == 200
+    listed_student = next(
+        entry
+        for entry in list_response.json()
+        if entry["username"] == "student_1@gmail.com"
+    )
+    assert listed_student["live_session_remaining"] == 9
+
+    reset_response = client.post(
+        f"/api/v1/auth/accounts/{student['id']}/reset-live-sessions",
+        json={
+            "actor_account_id": admin["id"],
+            "actor_session_token": admin["session_token"],
+        },
+    )
+    assert reset_response.status_code == 200
+    assert reset_response.json()["live_session_remaining"] == 10
 
 
-def test_only_developer_can_resolve_admin_requests(tmp_path, monkeypatch) -> None:
+def test_unknown_demo_username_returns_not_found(tmp_path, monkeypatch) -> None:
     monkeypatch.setattr(auth_service, "AUTH_DB_PATH", tmp_path / "auth.db")
-
-    create_response = client.post(
-        "/api/v1/auth/accounts",
-        json={
-            "name": "Second Reviewer",
-            "username": "second.reviewer",
-            "password": "supersecure",
-            "role": "admin",
-        },
-    )
-    assert create_response.status_code == 201
-    created = create_response.json()
-
-    student_response = client.post(
-        "/api/v1/auth/accounts",
-        json={
-            "name": "Student One",
-            "username": "student01",
-            "password": "supersecure",
-            "role": "student",
-        },
-    )
-    assert student_response.status_code == 201
-
-    forbidden_response = client.post(
-        f"/api/v1/auth/admin-requests/{created['id']}/reject",
-        json={"developer_account_id": student_response.json()["id"]},
-    )
-    assert forbidden_response.status_code == 403
-
-
-def test_auth_preview_conflicts_on_duplicate_display_name(tmp_path, monkeypatch) -> None:
-    monkeypatch.setattr(auth_service, "AUTH_DB_PATH", tmp_path / "auth.db")
-
-    first_response = client.post(
-        "/api/v1/auth/accounts",
-        json={
-            "name": "Shared Name",
-            "username": "student01",
-            "password": "supersecure",
-            "role": "student",
-        },
-    )
-    second_response = client.post(
-        "/api/v1/auth/accounts",
-        json={
-            "name": "Shared Name",
-            "username": "faculty01",
-            "password": "supersecure",
-            "role": "admin",
-        },
-    )
-
-    assert first_response.status_code == 201
-    assert second_response.status_code == 201
 
     preview_response = client.get(
         "/api/v1/auth/accounts/preview",
-        params={"identifier": "Shared Name"},
+        params={"identifier": "unknown.user@gmail.com"},
     )
 
-    assert preview_response.status_code == 409
-    assert "display name" in preview_response.json()["detail"]
+    assert preview_response.status_code == 404
+    assert "contact the developers" in preview_response.json()["detail"].lower()
 
 
 def test_auth_sign_in_upgrades_legacy_sha256_hash(tmp_path, monkeypatch) -> None:
@@ -267,8 +222,9 @@ def test_auth_sign_in_upgrades_legacy_sha256_hash(tmp_path, monkeypatch) -> None
                 password_salt,
                 password_scheme,
                 role,
+                is_seeded,
                 created_at
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 "account-legacy",
@@ -279,6 +235,7 @@ def test_auth_sign_in_upgrades_legacy_sha256_hash(tmp_path, monkeypatch) -> None
                 None,
                 "sha256",
                 "student",
+                1,
                 "2026-03-21T00:00:00+00:00",
             ),
         )
@@ -311,20 +268,46 @@ def test_auth_sign_in_upgrades_legacy_sha256_hash(tmp_path, monkeypatch) -> None
 
 
 def test_auth_update_account_changes_profile_and_password(tmp_path, monkeypatch) -> None:
-    monkeypatch.setattr(auth_service, "AUTH_DB_PATH", tmp_path / "auth.db")
+    db_path = tmp_path / "auth.db"
+    monkeypatch.setattr(auth_service, "AUTH_DB_PATH", db_path)
 
-    create_response = client.post(
-        "/api/v1/auth/accounts",
-        json={
-            "name": "Student One",
-            "username": "student01",
-            "password": "supersecure",
-            "role": "student",
-        },
-    )
+    auth_service._ensure_store()
+    password_salt = auth_service._generate_password_salt()
+    with sqlite3.connect(db_path) as connection:
+        connection.execute(
+            """
+            INSERT INTO auth_accounts (
+                id,
+                name,
+                username,
+                normalized_display_name,
+                password_hash,
+                password_salt,
+                password_scheme,
+                role,
+                is_seeded,
+                created_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                "account-manual-student",
+                "Student One",
+                "student01",
+                "student one",
+                auth_service._hash_password(
+                    password="supersecure",
+                    salt=password_salt,
+                    scheme=auth_service.CURRENT_PASSWORD_SCHEME,
+                ),
+                password_salt,
+                auth_service.CURRENT_PASSWORD_SCHEME,
+                "student",
+                0,
+                "2026-03-21T00:00:00+00:00",
+            ),
+        )
 
-    assert create_response.status_code == 201
-    account_id = create_response.json()["id"]
+    account_id = "account-manual-student"
 
     update_response = client.put(
         f"/api/v1/auth/accounts/{account_id}",
@@ -351,16 +334,20 @@ def test_auth_update_account_changes_profile_and_password(tmp_path, monkeypatch)
     )
     assert old_sign_in.status_code == 404
 
-    new_sign_in = client.post(
-        "/api/v1/auth/sign-in",
-        json={
-            "identifier": "student.prime",
-            "password": "newsupersecure",
-            "role": "student",
-        },
-    )
-    assert new_sign_in.status_code == 200
-    assert new_sign_in.json()["id"] == account_id
+    with sqlite3.connect(db_path) as connection:
+        row = connection.execute(
+            """
+            SELECT name, username, password_scheme
+            FROM auth_accounts
+            WHERE id = ?
+            """,
+            (account_id,),
+        ).fetchone()
+
+    assert row is not None
+    assert row[0] == "Student Prime"
+    assert row[1] == "student.prime"
+    assert row[2] == auth_service.CURRENT_PASSWORD_SCHEME
 
 
 def test_procedure_route_returns_expected_shape() -> None:
@@ -588,10 +575,21 @@ def test_coach_chat_route_returns_conversational_turn(monkeypatch) -> None:
 def test_knowledge_pack_route_returns_gamified_study_pack(monkeypatch) -> None:
     def fake_generate_knowledge_pack(_payload):
         return KnowledgePackResponse(
+            study_mode="related_topics",
+            topic_title="Needle Angle",
             title="Needle Entry Sprint",
             summary="A quick study pack for sharpening stage knowledge before practice.",
             recommended_focus="needle entry consistency",
             celebration_line="Strong round. Take that focus back into the trainer.",
+            topic_suggestions=[
+                {
+                    "id": "needle-angle",
+                    "label": "Needle Angle",
+                    "description": "Practice confident entry and exit angles that stay visible.",
+                    "study_mode": "related_topics",
+                }
+            ]
+            * 6,
             rapidfire_rounds=[
                 KnowledgeMultipleChoiceQuestion(
                     id="rapid-1",
@@ -658,7 +656,10 @@ def test_knowledge_pack_route_returns_gamified_study_pack(monkeypatch) -> None:
 
     assert response.status_code == 200
     data = response.json()
+    assert data["study_mode"] == "related_topics"
+    assert data["topic_title"] == "Needle Angle"
     assert data["title"] == "Needle Entry Sprint"
+    assert len(data["topic_suggestions"]) == 6
     assert len(data["rapidfire_rounds"]) == 5
     assert len(data["quiz_questions"]) == 5
     assert len(data["flashcards"]) == 6

@@ -9,6 +9,7 @@ import type {
   CoachSpeechRequest,
   DebriefRequest,
   DebriefResponse,
+  DemoAccountQuotaResetInput,
   HealthStatus,
   KnowledgePackRequest,
   KnowledgePackResponse,
@@ -29,8 +30,13 @@ type AuthAccountApiResponse = {
   username: string;
   role: UserRole;
   is_developer: boolean;
+  is_seeded: boolean;
   requested_role?: "admin" | null;
   admin_approval_status: AdminApprovalStatus;
+  live_session_limit?: number | null;
+  live_session_used: number;
+  live_session_remaining?: number | null;
+  session_token?: string | null;
   created_at: string;
 };
 
@@ -40,8 +46,13 @@ export type PersistedAuthAccount = {
   username: string;
   role: UserRole;
   isDeveloper: boolean;
+  isSeeded: boolean;
   requestedRole?: "admin" | null;
   adminApprovalStatus: AdminApprovalStatus;
+  liveSessionLimit?: number | null;
+  liveSessionUsed: number;
+  liveSessionRemaining?: number | null;
+  sessionToken?: string | null;
   createdAt: string;
 };
 
@@ -54,8 +65,13 @@ function toPersistedAuthAccount(
     username: response.username,
     role: response.role,
     isDeveloper: response.is_developer,
+    isSeeded: response.is_seeded,
     requestedRole: response.requested_role ?? null,
     adminApprovalStatus: response.admin_approval_status,
+    liveSessionLimit: response.live_session_limit ?? null,
+    liveSessionUsed: response.live_session_used,
+    liveSessionRemaining: response.live_session_remaining ?? null,
+    sessionToken: response.session_token ?? null,
     createdAt: response.created_at,
   };
 }
@@ -184,9 +200,11 @@ export async function updatePersistedAuthAccount(
 
 export async function listPendingAdminRequests(
   developerAccountId: string,
+  developerSessionToken: string,
 ): Promise<PersistedAuthAccount[]> {
   const params = new URLSearchParams({
     developer_account_id: developerAccountId,
+    developer_session_token: developerSessionToken,
   });
   const response = await fetch(`${API_BASE_URL}/auth/admin-requests?${params}`, {
     cache: "no-store",
@@ -204,6 +222,7 @@ async function resolveAdminRequest(
   const response = await fetch(`${API_BASE_URL}/auth/admin-requests/${accountId}/${path}`, {
     body: JSON.stringify({
       developer_account_id: payload.developerAccountId,
+      developer_session_token: payload.developerSessionToken,
     }),
     cache: "no-store",
     headers: {
@@ -228,6 +247,65 @@ export async function rejectAdminRequest(
   payload: AdminRequestDecisionInput,
 ): Promise<PersistedAuthAccount> {
   return resolveAdminRequest(accountId, "reject", payload);
+}
+
+export async function listDemoAccounts(
+  actorAccountId: string,
+  actorSessionToken: string,
+): Promise<PersistedAuthAccount[]> {
+  const params = new URLSearchParams({
+    actor_account_id: actorAccountId,
+    actor_session_token: actorSessionToken,
+  });
+  const response = await fetch(`${API_BASE_URL}/auth/demo-accounts?${params}`, {
+    cache: "no-store",
+  });
+
+  const data = await readJson<AuthAccountApiResponse[]>(response);
+  return data.map(toPersistedAuthAccount);
+}
+
+export async function consumeLiveSessionAllowance(payload: {
+  accountId: string;
+  sessionToken: string;
+}): Promise<PersistedAuthAccount> {
+  const response = await fetch(`${API_BASE_URL}/auth/live-sessions/consume`, {
+    body: JSON.stringify({
+      account_id: payload.accountId,
+      session_token: payload.sessionToken,
+    }),
+    cache: "no-store",
+    headers: {
+      "Content-Type": "application/json",
+    },
+    method: "POST",
+  });
+
+  const data = await readJson<AuthAccountApiResponse>(response);
+  return toPersistedAuthAccount(data);
+}
+
+export async function resetDemoAccountQuota(
+  accountId: string,
+  payload: DemoAccountQuotaResetInput,
+): Promise<PersistedAuthAccount> {
+  const response = await fetch(
+    `${API_BASE_URL}/auth/accounts/${accountId}/reset-live-sessions`,
+    {
+      body: JSON.stringify({
+        actor_account_id: payload.actorAccountId,
+        actor_session_token: payload.actorSessionToken,
+      }),
+      cache: "no-store",
+      headers: {
+        "Content-Type": "application/json",
+      },
+      method: "POST",
+    },
+  );
+
+  const data = await readJson<AuthAccountApiResponse>(response);
+  return toPersistedAuthAccount(data);
 }
 
 export async function analyzeFrame(

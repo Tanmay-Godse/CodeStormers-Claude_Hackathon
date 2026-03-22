@@ -72,20 +72,37 @@ export type KnowledgeFlashcard = {
   point_value: number;
 };
 
+export type KnowledgeStudyMode =
+  | "current_procedure"
+  | "related_topics"
+  | "common_mistakes";
+
+export type KnowledgeTopicSuggestion = {
+  id: string;
+  label: string;
+  description: string;
+  study_mode: KnowledgeStudyMode;
+};
+
 export type KnowledgePackRequest = {
   procedure_id: string;
   skill_level: SkillLevel;
   feedback_language: FeedbackLanguage;
   learner_name?: string;
   focus_area?: string;
+  study_mode?: KnowledgeStudyMode;
+  selected_topic?: string;
   recent_issue_labels?: string[];
 };
 
 export type KnowledgePackResponse = {
+  study_mode: KnowledgeStudyMode;
+  topic_title: string;
   title: string;
   summary: string;
   recommended_focus: string;
   celebration_line: string;
+  topic_suggestions: KnowledgeTopicSuggestion[];
   rapidfire_rounds: KnowledgeMultipleChoiceQuestion[];
   quiz_questions: KnowledgeMultipleChoiceQuestion[];
   flashcards: KnowledgeFlashcard[];
@@ -304,8 +321,13 @@ export type AuthUser = {
   username: string;
   role: UserRole;
   isDeveloper: boolean;
+  isSeeded: boolean;
   requestedRole?: "admin" | null;
   adminApprovalStatus: AdminApprovalStatus;
+  liveSessionLimit?: number | null;
+  liveSessionUsed: number;
+  liveSessionRemaining?: number | null;
+  sessionToken?: string | null;
   createdAt: string;
 };
 
@@ -316,8 +338,13 @@ export type AuthAccount = {
   passwordHash: string;
   role: UserRole;
   isDeveloper?: boolean;
+  isSeeded?: boolean;
   requestedRole?: "admin" | null;
   adminApprovalStatus?: AdminApprovalStatus;
+  liveSessionLimit?: number | null;
+  liveSessionUsed?: number;
+  liveSessionRemaining?: number | null;
+  sessionToken?: string | null;
   createdAt: string;
 };
 
@@ -343,6 +370,12 @@ export type UpdateAuthAccountInput = {
 
 export type AdminRequestDecisionInput = {
   developerAccountId: string;
+  developerSessionToken: string;
+};
+
+export type DemoAccountQuotaResetInput = {
+  actorAccountId: string;
+  actorSessionToken: string;
 };
 
 export type ReviewCase = {

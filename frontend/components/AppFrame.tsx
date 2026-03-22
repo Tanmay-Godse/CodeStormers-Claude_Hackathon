@@ -89,6 +89,7 @@ export function AppFrame({
   children,
   footerPrimaryAction,
   footerSecondaryActions = [],
+  mobileItems,
   pageTitle,
   sidebarItems,
   statusPill,
@@ -97,6 +98,13 @@ export function AppFrame({
   userName,
 }: AppFrameProps) {
   const userLabel = userName?.trim() || "Student Clinician";
+  const compactNavItems =
+    mobileItems && mobileItems.length > 0
+      ? mobileItems
+      : sidebarItems.map((item) => ({
+          href: item.href,
+          label: item.label,
+        }));
 
   return (
     <main className="page-shell dashboard-shell">
@@ -173,6 +181,25 @@ export function AppFrame({
           </header>
 
           <div className="dashboard-content">
+            {compactNavItems.length > 0 ? (
+              <nav aria-label="Workspace sections" className="dashboard-mobile-links">
+                {compactNavItems.map((item) => {
+                  const activeSidebarItem = sidebarItems.find(
+                    (sidebarItem) => sidebarItem.href === item.href,
+                  );
+
+                  return (
+                    <Link
+                      className={activeSidebarItem?.active ? "is-active" : ""}
+                      href={item.href}
+                      key={`${item.href}:${item.label}`}
+                    >
+                      {item.label}
+                    </Link>
+                  );
+                })}
+              </nav>
+            ) : null}
             <div className="app-frame-stack">{children}</div>
           </div>
         </section>

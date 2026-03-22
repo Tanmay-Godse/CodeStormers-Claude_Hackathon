@@ -33,6 +33,7 @@ export default function DeveloperApprovalsPage() {
     }
 
     const developerAccountId = user.accountId;
+    const developerSessionToken = user.sessionToken;
 
     let cancelled = false;
 
@@ -41,7 +42,14 @@ export default function DeveloperApprovalsPage() {
       setPageError(null);
 
       try {
-        const response = await listPendingAdminRequests(developerAccountId);
+        if (!developerSessionToken) {
+          throw new Error("Sign in again before loading developer approvals.");
+        }
+
+        const response = await listPendingAdminRequests(
+          developerAccountId,
+          developerSessionToken,
+        );
         if (!cancelled) {
           setRequests(response);
         }
@@ -76,10 +84,20 @@ export default function DeveloperApprovalsPage() {
     setPageError(null);
 
     try {
+      if (!user.sessionToken) {
+        throw new Error("Sign in again before resolving access requests.");
+      }
+
       if (decision === "approve") {
-        await approveAdminRequest(accountId, { developerAccountId: user.accountId });
+        await approveAdminRequest(accountId, {
+          developerAccountId: user.accountId,
+          developerSessionToken: user.sessionToken,
+        });
       } else {
-        await rejectAdminRequest(accountId, { developerAccountId: user.accountId });
+        await rejectAdminRequest(accountId, {
+          developerAccountId: user.accountId,
+          developerSessionToken: user.sessionToken,
+        });
       }
 
       setRequests((current) => current.filter((entry) => entry.id !== accountId));
