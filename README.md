@@ -1,70 +1,97 @@
 # Clinical Curator AI
 
-Clinical Curator AI is a simulation-only clinical skills trainer centered on a
-live suturing demo. Learners practice on safe surfaces such as an orange,
-banana, or foam pad while the system handles camera-based feedback, live voice
-coaching, debriefs, review tickets, and short knowledge rounds.
+Clinical Curator AI is a simulation-only clinical skills trainer designed for
+safe, guided procedural practice. Learners work on surfaces such as an orange,
+banana, or foam pad while the system delivers camera-based feedback, live voice
+coaching, review debriefs, human-review escalation, and short knowledge rounds.
 
-## Start Here
+This project was built as a hackathon-ready demo, but the product direction is
+clear: make procedural training more accessible, more repeatable, and more
+supportive for learners practicing outside a high-resource lab.
 
-- [docs/README.md](docs/README.md): documentation hub and reading order
-- [docs/how-to-run.md](docs/how-to-run.md): fastest local run path
-- [docs/local-setup.md](docs/local-setup.md): fuller developer setup and architecture
-- [docs/vercel-deployment.md](docs/vercel-deployment.md): frontend deployment on Vercel
-- [docs/backend-deployment.md](docs/backend-deployment.md): persistent backend deployment
-- [docs/api-reference.md](docs/api-reference.md): backend API reference
+## What The Demo Does
 
-## Current Demo Surface
+- live trainer with camera-based step checking
+- voice-guided coaching during practice
+- review and debrief workflow after each run
+- Knowledge Lab with rapidfire, quiz, and flashcards
+- admin review queue for low-confidence or escalated cases
+- quota-managed public demo accounts for safe judging access
 
-- `/login`: fixed-account sign-in for the public demo
-- `/dashboard`: primary landing page after sign-in
-- `/train/simple-interrupted-suture`: live trainer
-- `/review/[sessionId]`: debrief and replay
-- `/knowledge`: rapidfire, quiz, and flashcards
-- `/library`: procedure guide and practice references
-- `/profile`: account and quota view
-- `/admin/reviews`: human review queue
-- `/developer/approvals`: developer-only approval flow
+## Core Experience
 
-## Architecture
+1. Sign in to a demo account.
+2. Start a live session from the dashboard.
+3. Practice on a safe simulated surface.
+4. Receive coaching and step-level feedback during the run.
+5. Open the generated review and debrief.
+6. Reinforce weak spots through the Knowledge Lab and procedure library.
 
-- `frontend`: Next.js 16 app in [`frontend/`](frontend/)
-- `backend`: FastAPI app in [`backend/`](backend/)
-- `analysis / coach / debrief`: Anthropic-backed requests
+## Why It Feels Different
+
+- simulation-only by design, with safe surfaces built into the flow
+- combines live feedback, reflection, and follow-up learning in one system
+- supports low-bandwidth and offline-friendly practice patterns
+- keeps the public demo controlled through seeded accounts and live-session limits
+
+## Stack
+
+- `frontend`: Next.js 16
+- `backend`: FastAPI
+- `analysis / coach / debrief / knowledge`: Anthropic-backed model requests
 - `speech-to-text`: OpenAI `gpt-4o-mini-transcribe`
 - `speech output`: browser speech first, backend TTS fallback
 - `auth and quota persistence`: SQLite in the backend
 - `session history and cached learning state`: browser `localStorage`
-- `deployment shape`: frontend on Vercel, backend on a separate persistent Python host
 
-## Public Demo Accounts
+## Architecture
 
-The public login flow is fixed-account-only so the deployed demo does not allow
-open self-service account creation.
+```text
+Learner Browser
+   -> Next.js frontend
+   -> FastAPI backend
+   -> AI providers + persistent runtime data
+```
 
-- `Student_1@gmail.com`
-- `Student_2@gmail.com`
-- `Student_3@gmail.com`
-- `Student_4@gmail.com`
-- shared password: `CODESTORMERS`
+Recommended hosted shape:
 
-Public demo rules:
+- `frontend` on Vercel
+- `backend` on a separate persistent Python host
 
-- each public student account has `10` live sessions
-- the live-session allowance is consumed when a camera run starts
-- learners cannot reset their own quota
-- only admin or developer accounts can reset demo account limits
-- unknown usernames are routed to `/access-required`
+## Quick Start
+
+If you want the app running quickly:
+
+- [docs/how-to-run.md](docs/how-to-run.md)
+
+If you want the full developer setup and architecture notes:
+
+- [docs/local-setup.md](docs/local-setup.md)
+
+If you are preparing deployment:
+
+- [docs/vercel-deployment.md](docs/vercel-deployment.md)
+- [docs/backend-deployment.md](docs/backend-deployment.md)
 
 ## Repository Layout
 
 ```text
 .
-|-- backend/       FastAPI API, AI transport, scoring, auth, review queue, tests
-|-- docs/          setup, deployment, API, and team-process documentation
-|-- frontend/      Next.js UI, trainer, dashboard, review, profile, and library
-`-- open-library/  procedure rubric and benchmark reference assets
+|-- backend/       FastAPI API, auth, scoring, AI transport, review queue, tests
+|-- docs/          setup, deployment, team process, and API documentation
+|-- frontend/      Next.js UI for trainer, dashboard, review, knowledge, and profile
+`-- open-library/  rubric and benchmark reference assets
 ```
+
+## Documentation
+
+- [docs/README.md](docs/README.md): documentation hub
+- [docs/how-to-run.md](docs/how-to-run.md): fastest local run path
+- [docs/local-setup.md](docs/local-setup.md): full local development guide
+- [docs/api-reference.md](docs/api-reference.md): backend route reference
+- [docs/team-setup.md](docs/team-setup.md): secret handling and release hygiene
+- [backend/README.md](backend/README.md): backend package guide
+- [frontend/README.md](frontend/README.md): frontend package guide
 
 ## Verification
 
@@ -79,7 +106,8 @@ source .venv/bin/activate
 pytest
 ```
 
-## Package Docs
+## Public Demo Notes
 
-- [backend/README.md](backend/README.md)
-- [frontend/README.md](frontend/README.md)
+The public demo uses fixed student accounts with limited live-session access so
+judging stays stable and usage stays controlled. The detailed local login flow,
+demo behavior, and setup notes live in [docs/how-to-run.md](docs/how-to-run.md).
