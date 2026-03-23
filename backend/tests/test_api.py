@@ -21,6 +21,7 @@ from app.schemas.knowledge import (
     KnowledgePackResponse,
 )
 from app.services import auth_service
+from app.services import learning_state_service
 from app.services.ai_client import AIConfigurationError
 from app.services import review_queue_service
 
@@ -385,6 +386,399 @@ def test_auth_update_account_changes_profile_and_password(tmp_path, monkeypatch)
     assert row[0] == "Student Prime"
     assert row[1] == "student.prime"
     assert row[2] == auth_service.CURRENT_PASSWORD_SCHEME
+
+
+def test_learning_state_round_trip_persists_sessions_and_progress(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    monkeypatch.setattr(auth_service, "AUTH_DB_PATH", tmp_path / "auth.db")
+    monkeypatch.setattr(
+        learning_state_service,
+        "LEARNING_DB_PATH",
+        tmp_path / "learning_state.db",
+    )
+
+    sign_in_response = client.post(
+        "/api/v1/auth/sign-in",
+        json={
+            "identifier": "Student_1@gmail.com",
+            "password": "CODESTORMERS",
+            "role": "student",
+        },
+    )
+    assert sign_in_response.status_code == 200
+    student = sign_in_response.json()
+
+    session_payload = {
+        "id": "session-demo-1",
+        "procedureId": "simple-interrupted-suture",
+        "ownerUsername": "someone-else@example.com",
+        "skillLevel": "beginner",
+        "practiceSurface": "foam pad",
+        "simulationConfirmed": True,
+        "learnerFocus": "needle entry consistency",
+        "calibration": {
+            "tl": {"x": 0, "y": 0},
+            "tr": {"x": 1, "y": 0},
+            "br": {"x": 1, "y": 1},
+            "bl": {"x": 0, "y": 1},
+        },
+        "equityMode": {
+            "enabled": False,
+            "feedbackLanguage": "en",
+            "audioCoaching": True,
+            "coachVoice": "guide_female",
+            "lowBandwidthMode": False,
+            "cheapPhoneMode": False,
+            "offlinePracticeLogging": True,
+        },
+        "events": [],
+        "offlinePracticeLogs": [],
+        "createdAt": "2026-03-21T00:00:00.000Z",
+        "updatedAt": "2026-03-21T00:05:00.000Z",
+    }
+
+    session_response = client.put(
+        "/api/v1/learning-state/sessions/session-demo-1",
+        json={
+            "account_id": student["id"],
+            "session_token": student["session_token"],
+            "session": session_payload,
+            "make_active": True,
+        },
+    )
+    assert session_response.status_code == 200
+    assert session_response.json()["ownerUsername"] == "student_1@gmail.com"
+
+    progress_response = client.put(
+        "/api/v1/learning-state/knowledge-progress",
+        json={
+            "account_id": student["id"],
+            "session_token": student["session_token"],
+            "progress": {
+                "answeredCount": 8,
+                "completedQuizRounds": 2,
+                "correctCount": 6,
+                "flashcardsMastered": 4,
+                "perfectRounds": 1,
+                "rapidfireBestStreak": 5,
+                "totalPoints": 120,
+            },
+        },
+    )
+    assert progress_response.status_code == 200
+    assert progress_response.json()["totalPoints"] == 120
+
+    snapshot_response = client.get(
+        "/api/v1/learning-state",
+        params={
+            "account_id": student["id"],
+            "session_token": student["session_token"],
+        },
+    )
+    assert snapshot_response.status_code == 200
+    snapshot = snapshot_response.json()
+    assert snapshot["active_session_ids"] == {
+        "simple-interrupted-suture": "session-demo-1"
+    }
+    assert snapshot["knowledge_progress"]["rapidfireBestStreak"] == 5
+    assert len(snapshot["sessions"]) == 1
+    assert snapshot["sessions"][0]["id"] == "session-demo-1"
+    assert snapshot["sessions"][0]["ownerUsername"] == "student_1@gmail.com"
+
+
+def test_learning_state_rejects_cross_account_session_id_takeover(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    monkeypatch.setattr(auth_service, "AUTH_DB_PATH", tmp_path / "auth.db")
+    monkeypatch.setattr(
+        learning_state_service,
+        "LEARNING_DB_PATH",
+        tmp_path / "learning_state.db",
+    )
+
+    student_one_sign_in = client.post(
+        "/api/v1/auth/sign-in",
+        json={
+            "identifier": "Student_1@gmail.com",
+            "password": "CODESTORMERS",
+            "role": "student",
+        },
+    )
+    assert student_one_sign_in.status_code == 200
+    student_one = student_one_sign_in.json()
+
+    student_two_sign_in = client.post(
+        "/api/v1/auth/sign-in",
+        json={
+            "identifier": "Student_2@gmail.com",
+            "password": "CODESTORMERS",
+            "role": "student",
+        },
+    )
+    assert student_two_sign_in.status_code == 200
+    student_two = student_two_sign_in.json()
+
+    create_response = client.put(
+        "/api/v1/learning-state/sessions/session-shared-id",
+        json={
+            "account_id": student_one["id"],
+            "session_token": student_one["session_token"],
+            "session": {
+                "id": "session-shared-id",
+                "procedureId": "simple-interrupted-suture",
+                "skillLevel": "beginner",
+                "calibration": {
+                    "tl": {"x": 0, "y": 0},
+                    "tr": {"x": 1, "y": 0},
+                    "br": {"x": 1, "y": 1},
+                    "bl": {"x": 0, "y": 1},
+                },
+                "equityMode": {
+                    "enabled": False,
+                    "feedbackLanguage": "en",
+                    "audioCoaching": True,
+                    "coachVoice": "guide_female",
+                    "lowBandwidthMode": False,
+                    "cheapPhoneMode": False,
+                    "offlinePracticeLogging": True,
+                },
+                "events": [],
+                "offlinePracticeLogs": [],
+                "createdAt": "2026-03-21T00:00:00.000Z",
+                "updatedAt": "2026-03-21T00:05:00.000Z",
+            },
+            "make_active": True,
+        },
+    )
+    assert create_response.status_code == 200
+
+    takeover_response = client.put(
+        "/api/v1/learning-state/sessions/session-shared-id",
+        json={
+            "account_id": student_two["id"],
+            "session_token": student_two["session_token"],
+            "session": {
+                "id": "session-shared-id",
+                "procedureId": "simple-interrupted-suture",
+                "skillLevel": "intermediate",
+                "calibration": {
+                    "tl": {"x": 0, "y": 0},
+                    "tr": {"x": 1, "y": 0},
+                    "br": {"x": 1, "y": 1},
+                    "bl": {"x": 0, "y": 1},
+                },
+                "equityMode": {
+                    "enabled": False,
+                    "feedbackLanguage": "en",
+                    "audioCoaching": True,
+                    "coachVoice": "guide_female",
+                    "lowBandwidthMode": False,
+                    "cheapPhoneMode": False,
+                    "offlinePracticeLogging": True,
+                },
+                "events": [],
+                "offlinePracticeLogs": [],
+                "createdAt": "2026-03-21T00:10:00.000Z",
+                "updatedAt": "2026-03-21T00:15:00.000Z",
+            },
+            "make_active": True,
+        },
+    )
+    assert takeover_response.status_code == 403
+
+
+def test_learning_state_make_active_must_be_explicit(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    monkeypatch.setattr(auth_service, "AUTH_DB_PATH", tmp_path / "auth.db")
+    monkeypatch.setattr(
+        learning_state_service,
+        "LEARNING_DB_PATH",
+        tmp_path / "learning_state.db",
+    )
+
+    sign_in_response = client.post(
+        "/api/v1/auth/sign-in",
+        json={
+            "identifier": "Student_1@gmail.com",
+            "password": "CODESTORMERS",
+            "role": "student",
+        },
+    )
+    assert sign_in_response.status_code == 200
+    student = sign_in_response.json()
+
+    first_session_response = client.put(
+        "/api/v1/learning-state/sessions/session-active-one",
+        json={
+            "account_id": student["id"],
+            "session_token": student["session_token"],
+            "session": {
+                "id": "session-active-one",
+                "procedureId": "simple-interrupted-suture",
+                "skillLevel": "beginner",
+                "calibration": {
+                    "tl": {"x": 0, "y": 0},
+                    "tr": {"x": 1, "y": 0},
+                    "br": {"x": 1, "y": 1},
+                    "bl": {"x": 0, "y": 1},
+                },
+                "equityMode": {
+                    "enabled": False,
+                    "feedbackLanguage": "en",
+                    "audioCoaching": True,
+                    "coachVoice": "guide_female",
+                    "lowBandwidthMode": False,
+                    "cheapPhoneMode": False,
+                    "offlinePracticeLogging": True,
+                },
+                "events": [],
+                "offlinePracticeLogs": [],
+                "createdAt": "2026-03-21T00:00:00.000Z",
+                "updatedAt": "2026-03-21T00:05:00.000Z",
+            },
+            "make_active": True,
+        },
+    )
+    assert first_session_response.status_code == 200
+
+    second_session_response = client.put(
+        "/api/v1/learning-state/sessions/session-active-two",
+        json={
+            "account_id": student["id"],
+            "session_token": student["session_token"],
+            "session": {
+                "id": "session-active-two",
+                "procedureId": "simple-interrupted-suture",
+                "skillLevel": "beginner",
+                "calibration": {
+                    "tl": {"x": 0, "y": 0},
+                    "tr": {"x": 1, "y": 0},
+                    "br": {"x": 1, "y": 1},
+                    "bl": {"x": 0, "y": 1},
+                },
+                "equityMode": {
+                    "enabled": False,
+                    "feedbackLanguage": "en",
+                    "audioCoaching": True,
+                    "coachVoice": "guide_female",
+                    "lowBandwidthMode": False,
+                    "cheapPhoneMode": False,
+                    "offlinePracticeLogging": True,
+                },
+                "events": [],
+                "offlinePracticeLogs": [],
+                "createdAt": "2026-03-21T00:10:00.000Z",
+                "updatedAt": "2026-03-21T00:15:00.000Z",
+            },
+        },
+    )
+    assert second_session_response.status_code == 200
+
+    snapshot_response = client.get(
+        "/api/v1/learning-state",
+        params={
+            "account_id": student["id"],
+            "session_token": student["session_token"],
+        },
+    )
+    assert snapshot_response.status_code == 200
+    assert snapshot_response.json()["active_session_ids"] == {
+        "simple-interrupted-suture": "session-active-one"
+    }
+
+
+def test_learning_state_snapshot_normalizes_stale_stored_username(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    monkeypatch.setattr(auth_service, "AUTH_DB_PATH", tmp_path / "auth.db")
+    monkeypatch.setattr(
+        learning_state_service,
+        "LEARNING_DB_PATH",
+        tmp_path / "learning_state.db",
+    )
+
+    sign_in_response = client.post(
+        "/api/v1/auth/sign-in",
+        json={
+            "identifier": "Student_1@gmail.com",
+            "password": "CODESTORMERS",
+            "role": "student",
+        },
+    )
+    assert sign_in_response.status_code == 200
+    student = sign_in_response.json()
+
+    session_response = client.put(
+        "/api/v1/learning-state/sessions/session-stale-username",
+        json={
+            "account_id": student["id"],
+            "session_token": student["session_token"],
+            "session": {
+                "id": "session-stale-username",
+                "procedureId": "simple-interrupted-suture",
+                "ownerUsername": "student_1@gmail.com",
+                "skillLevel": "beginner",
+                "calibration": {
+                    "tl": {"x": 0, "y": 0},
+                    "tr": {"x": 1, "y": 0},
+                    "br": {"x": 1, "y": 1},
+                    "bl": {"x": 0, "y": 1},
+                },
+                "equityMode": {
+                    "enabled": False,
+                    "feedbackLanguage": "en",
+                    "audioCoaching": True,
+                    "coachVoice": "guide_female",
+                    "lowBandwidthMode": False,
+                    "cheapPhoneMode": False,
+                    "offlinePracticeLogging": True,
+                },
+                "events": [],
+                "offlinePracticeLogs": [],
+                "createdAt": "2026-03-21T00:00:00.000Z",
+                "updatedAt": "2026-03-21T00:05:00.000Z",
+            },
+        },
+    )
+    assert session_response.status_code == 200
+
+    with sqlite3.connect(learning_state_service.LEARNING_DB_PATH) as connection:
+        row = connection.execute(
+            """
+            SELECT payload_json
+            FROM learning_sessions
+            WHERE id = ?
+            """,
+            ("session-stale-username",),
+        ).fetchone()
+        assert row is not None
+        payload = json.loads(row[0])
+        payload["ownerUsername"] = "stale-user@example.com"
+        connection.execute(
+            """
+            UPDATE learning_sessions
+            SET payload_json = ?
+            WHERE id = ?
+            """,
+            (json.dumps(payload), "session-stale-username"),
+        )
+
+    snapshot_response = client.get(
+        "/api/v1/learning-state",
+        params={
+            "account_id": student["id"],
+            "session_token": student["session_token"],
+        },
+    )
+    assert snapshot_response.status_code == 200
+    snapshot = snapshot_response.json()
+    assert snapshot["sessions"][0]["ownerUsername"] == "student_1@gmail.com"
 
 
 def test_procedure_route_returns_expected_shape() -> None:

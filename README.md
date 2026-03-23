@@ -41,8 +41,8 @@ supportive for learners practicing outside a high-resource lab.
 - `analysis / coach / debrief / knowledge`: Anthropic-backed model requests
 - `speech-to-text`: OpenAI `gpt-4o-mini-transcribe`
 - `speech output`: browser speech first, backend TTS fallback
-- `auth and quota persistence`: SQLite in the backend
-- `session history and cached learning state`: browser `localStorage`
+- `auth, quota, and learning-state persistence`: SQLite in the backend
+- `client cache and offline logs`: browser `localStorage`
 
 ## Architecture
 

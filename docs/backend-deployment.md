@@ -12,8 +12,9 @@ This backend is intended for a persistent Python host, not Vercel serverless.
 Why persistence matters:
 
 - auth accounts and live-session quotas are stored in SQLite
+- synced session history, active-session state, and Knowledge Lab progress are stored in SQLite
 - review queue state is stored on disk
-- ephemeral storage can reset demo quota and review state
+- ephemeral storage can reset demo quota, learning history, and review state
 
 ## Required Runtime Configuration
 
@@ -88,14 +89,17 @@ Manual checks:
 
 1. Sign in from the deployed frontend.
 2. Start a live session.
-3. Confirm the backend writes quota state under the persistent data mount.
-4. Confirm review cases still exist after a backend restart.
+3. Confirm the backend writes quota and learning-state files under the persistent data mount.
+4. Refresh the browser and confirm the session history rehydrates.
+5. Confirm review cases still exist after a backend restart.
 
 ## Common Failure Modes
 
 - `invalid x-api-key` or another Anthropic credential error:
   `AI_API_KEY` is missing, placeholder-only, revoked, or wrong.
 - Quota appears to reset after restart:
+  the backend data directory is not on persistent storage.
+- Session history or Knowledge Lab progress disappears after restart:
   the backend data directory is not on persistent storage.
 - Frontend loads but API calls fail:
   `FRONTEND_ORIGIN` does not match the exact deployed frontend origin.

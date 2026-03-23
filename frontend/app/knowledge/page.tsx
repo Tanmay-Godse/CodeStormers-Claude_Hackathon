@@ -7,9 +7,16 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { AppFrame } from "@/components/AppFrame";
 import { generateKnowledgePack } from "@/lib/api";
 import { buildSharedSidebarItems, DEFAULT_TRAINING_HREF } from "@/lib/appShell";
-import { clearAuthUser } from "@/lib/storage";
+import {
+  clearAuthUser,
+  createDefaultKnowledgeProgress,
+  getKnowledgeProgress,
+  saveKnowledgeProgress,
+  syncLearningStateFromBackend,
+} from "@/lib/storage";
 import type {
   FeedbackLanguage,
+  KnowledgeProgress,
   KnowledgePackResponse,
   KnowledgeStudyMode,
   KnowledgeTopicSuggestion,
@@ -19,30 +26,9 @@ import type {
 import { useWorkspaceUser } from "@/lib/useWorkspaceUser";
 
 const KNOWLEDGE_PROCEDURE_ID = "simple-interrupted-suture";
-const KNOWLEDGE_PROGRESS_PREFIX = "ai-clinical-skills-coach:knowledge-progress";
 const RAPIDFIRE_SECONDS = 12;
 
 type KnowledgeTab = "flashcards" | "quiz" | "rapidfire";
-
-type KnowledgeProgress = {
-  answeredCount: number;
-  completedQuizRounds: number;
-  correctCount: number;
-  flashcardsMastered: number;
-  perfectRounds: number;
-  rapidfireBestStreak: number;
-  totalPoints: number;
-};
-
-const defaultKnowledgeProgress: KnowledgeProgress = {
-  answeredCount: 0,
-  completedQuizRounds: 0,
-  correctCount: 0,
-  flashcardsMastered: 0,
-  perfectRounds: 0,
-  rapidfireBestStreak: 0,
-  totalPoints: 0,
-};
 
 const KNOWLEDGE_LANE_META: Record<
   KnowledgeStudyMode,
@@ -61,53 +47,6 @@ const KNOWLEDGE_LANE_META: Record<
     description: "Practice spotting misses and the best reset for them.",
   },
 };
-
-function progressKey(username: string) {
-  return `${KNOWLEDGE_PROGRESS_PREFIX}:${username.trim().toLowerCase()}`;
-}
-
-function readProgress(username: string): KnowledgeProgress {
-  if (typeof window === "undefined") {
-    return defaultKnowledgeProgress;
-  }
-
-  const raw = window.localStorage.getItem(progressKey(username));
-  if (!raw) {
-    return defaultKnowledgeProgress;
-  }
-
-  try {
-    const parsed = JSON.parse(raw) as Partial<KnowledgeProgress>;
-    return {
-      answeredCount:
-        typeof parsed.answeredCount === "number" ? parsed.answeredCount : 0,
-      completedQuizRounds:
-        typeof parsed.completedQuizRounds === "number"
-          ? parsed.completedQuizRounds
-          : 0,
-      correctCount: typeof parsed.correctCount === "number" ? parsed.correctCount : 0,
-      flashcardsMastered:
-        typeof parsed.flashcardsMastered === "number" ? parsed.flashcardsMastered : 0,
-      perfectRounds:
-        typeof parsed.perfectRounds === "number" ? parsed.perfectRounds : 0,
-      rapidfireBestStreak:
-        typeof parsed.rapidfireBestStreak === "number"
-          ? parsed.rapidfireBestStreak
-          : 0,
-      totalPoints: typeof parsed.totalPoints === "number" ? parsed.totalPoints : 0,
-    };
-  } catch {
-    return defaultKnowledgeProgress;
-  }
-}
-
-function writeProgress(username: string, progress: KnowledgeProgress) {
-  if (typeof window === "undefined") {
-    return;
-  }
-
-  window.localStorage.setItem(progressKey(username), JSON.stringify(progress));
-}
 
 function ratingFromPoints(points: number) {
   if (points >= 700) {
@@ -253,7 +192,9 @@ export default function KnowledgePage() {
   const [activeTab, setActiveTab] = useState<KnowledgeTab>("rapidfire");
   const [studyMode, setStudyMode] = useState<KnowledgeStudyMode>("current_procedure");
   const [selectedTopic, setSelectedTopic] = useState("");
-  const [progress, setProgress] = useState<KnowledgeProgress>(defaultKnowledgeProgress);
+  const [progress, setProgress] = useState<KnowledgeProgress>(
+    createDefaultKnowledgeProgress,
+  );
   const [rapidfireState, setRapidfireState] = useState(resetRapidfireState);
   const [quizState, setQuizState] = useState(resetQuizState);
   const [flashcardIndex, setFlashcardIndex] = useState(0);
@@ -271,11 +212,36 @@ export default function KnowledgePage() {
       router.replace("/developer/approvals");
       return;
     }
-
-    if (user) {
-      setProgress(readProgress(user.username));
-    }
   }, [hydrated, router, user]);
+
+  useEffect(() => {
+    if (!user) {
+      setProgress(createDefaultKnowledgeProgress());
+      return;
+    }
+
+    const username = user.username;
+    let cancelled = false;
+    setProgress(getKnowledgeProgress(username));
+
+    async function hydrateProgress() {
+      try {
+        await syncLearningStateFromBackend();
+      } catch {
+        return;
+      }
+
+      if (!cancelled) {
+        setProgress(getKnowledgeProgress(username));
+      }
+    }
+
+    void hydrateProgress();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [user]);
 
   const latestReviewHref = useMemo(() => deriveReviewHref(sessions), [sessions]);
   const hasSavedSession = sessions.length > 0;
@@ -296,7 +262,7 @@ export default function KnowledgePage() {
 
       setProgress((previous) => {
         const next = mutator(previous);
-        writeProgress(user.username, next);
+        saveKnowledgeProgress(user.username, next);
         return next;
       });
     },

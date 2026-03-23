@@ -10,7 +10,7 @@ This document covers the recommended hosted shape for the `frontend`.
 Why this split is recommended:
 
 - the frontend is a standard Next.js app and fits Vercel well
-- the backend owns SQLite auth and quota state
+- the backend owns SQLite auth, quota, and learning-state persistence
 - the backend owns review queue persistence
 - the backend handles longer AI and transcription calls
 - the backend currently expects one explicit `FRONTEND_ORIGIN` value for CORS

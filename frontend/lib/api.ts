@@ -11,8 +11,11 @@ import type {
   DebriefResponse,
   DemoAccountQuotaResetInput,
   HealthStatus,
+  KnowledgeProgress,
   KnowledgePackRequest,
   KnowledgePackResponse,
+  LearningStateSnapshot,
+  SessionRecord,
   UserRole,
   ProcedureDefinition,
   ResolveReviewCaseRequest,
@@ -66,6 +69,12 @@ export type PersistedAuthAccount = {
   liveSessionRemaining?: number | null;
   sessionToken?: string | null;
   createdAt: string;
+};
+
+type LearningStateApiResponse = {
+  sessions: SessionRecord[];
+  active_session_ids: Record<string, string>;
+  knowledge_progress: KnowledgeProgress;
 };
 
 function toPersistedAuthAccount(
@@ -318,6 +327,73 @@ export async function resetDemoAccountQuota(
 
   const data = await readJson<AuthAccountApiResponse>(response);
   return toPersistedAuthAccount(data);
+}
+
+export async function getPersistedLearningState(payload: {
+  accountId: string;
+  sessionToken: string;
+}): Promise<LearningStateSnapshot> {
+  const params = new URLSearchParams({
+    account_id: payload.accountId,
+    session_token: payload.sessionToken,
+  });
+  const response = await fetch(buildApiUrl(`/learning-state?${params}`), {
+    cache: "no-store",
+  });
+
+  const data = await readJson<LearningStateApiResponse>(response);
+  return {
+    sessions: data.sessions,
+    activeSessionIds: data.active_session_ids,
+    knowledgeProgress: data.knowledge_progress,
+  };
+}
+
+export async function savePersistedLearningSession(payload: {
+  accountId: string;
+  sessionToken: string;
+  session: SessionRecord;
+  makeActive?: boolean;
+}): Promise<SessionRecord> {
+  const response = await fetch(
+    buildApiUrl(`/learning-state/sessions/${payload.session.id}`),
+    {
+      body: JSON.stringify({
+        account_id: payload.accountId,
+        session_token: payload.sessionToken,
+        session: payload.session,
+        make_active: payload.makeActive ?? false,
+      }),
+      cache: "no-store",
+      headers: {
+        "Content-Type": "application/json",
+      },
+      method: "PUT",
+    },
+  );
+
+  return readJson<SessionRecord>(response);
+}
+
+export async function savePersistedKnowledgeProgress(payload: {
+  accountId: string;
+  sessionToken: string;
+  progress: KnowledgeProgress;
+}): Promise<KnowledgeProgress> {
+  const response = await fetch(buildApiUrl("/learning-state/knowledge-progress"), {
+    body: JSON.stringify({
+      account_id: payload.accountId,
+      session_token: payload.sessionToken,
+      progress: payload.progress,
+    }),
+    cache: "no-store",
+    headers: {
+      "Content-Type": "application/json",
+    },
+    method: "PUT",
+  });
+
+  return readJson<KnowledgeProgress>(response);
 }
 
 export async function analyzeFrame(

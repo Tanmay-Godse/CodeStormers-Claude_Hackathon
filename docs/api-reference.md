@@ -21,6 +21,7 @@ directly.
 - auth uses username-only lookup in the public demo
 - seeded demo accounts return quota fields such as `live_session_limit` and `live_session_remaining`
 - the frontend currently sends fixed defaults for simulation confirmation, audio coaching, and offline logging
+- the frontend keeps a browser cache, but the backend is now the source of truth for synced session history and Knowledge Lab progress
 
 ## Health And Procedure
 
@@ -160,6 +161,74 @@ Access:
 
 These routes are developer-only approval controls. They are mainly for the
 internal approval workflow, not for judge-facing demo use.
+
+## Learning State
+
+### `GET /learning-state`
+
+Returns the signed-in learner's synced state snapshot.
+
+Query params:
+
+- `account_id`
+- `session_token`
+
+Response fields:
+
+- `sessions`
+- `active_session_ids`
+- `knowledge_progress`
+
+### `PUT /learning-state/sessions/{session_id}`
+
+Upserts one synced learner session record.
+
+Example request:
+
+```json
+{
+  "account_id": "account-demo-student-1",
+  "session_token": "...",
+  "session": {
+    "id": "session-123",
+    "procedureId": "simple-interrupted-suture",
+    "ownerUsername": "student_1@gmail.com",
+    "skillLevel": "beginner",
+    "events": [],
+    "createdAt": "2026-03-21T00:00:00.000Z",
+    "updatedAt": "2026-03-21T00:05:00.000Z"
+  },
+  "make_active": true
+}
+```
+
+Notes:
+
+- the backend normalizes `ownerUsername` to the authenticated account
+- `make_active` is optional and defaults to `false`
+- a learner cannot reuse another account's `session_id`
+
+### `PUT /learning-state/knowledge-progress`
+
+Upserts the signed-in learner's Knowledge Lab progress counters.
+
+Example request:
+
+```json
+{
+  "account_id": "account-demo-student-1",
+  "session_token": "...",
+  "progress": {
+    "answeredCount": 12,
+    "completedQuizRounds": 3,
+    "correctCount": 10,
+    "flashcardsMastered": 5,
+    "perfectRounds": 1,
+    "rapidfireBestStreak": 6,
+    "totalPoints": 180
+  }
+}
+```
 
 ## Knowledge
 

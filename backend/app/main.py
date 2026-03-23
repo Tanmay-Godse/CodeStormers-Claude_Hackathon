@@ -8,6 +8,7 @@ from app.api.routes import (
     debrief,
     health,
     knowledge,
+    learning_state,
     procedures,
     review_cases,
     tts,
@@ -32,4 +33,5 @@ app.include_router(coach.router, prefix="/api/v1")
 app.include_router(tts.router, prefix="/api/v1")
 app.include_router(debrief.router, prefix="/api/v1")
 app.include_router(knowledge.router, prefix="/api/v1")
+app.include_router(learning_state.router, prefix="/api/v1")
 app.include_router(review_cases.router, prefix="/api/v1")

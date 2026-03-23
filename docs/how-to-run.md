@@ -94,6 +94,7 @@ Public demo behavior:
 6. Use `Check My Step` for grading and coaching.
 7. Open the generated review from the session flow.
 8. Visit `/knowledge` and `/library` to confirm the supporting surfaces load.
+9. Refresh `/dashboard` or `/review/[sessionId]` and confirm the session history rehydrates from the backend.
 
 ## 5. Quick Checks
 

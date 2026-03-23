@@ -38,6 +38,7 @@ import {
   getOrCreateActiveSession,
   saveSession,
   startFreshSession,
+  syncLearningStateFromBackend,
 } from "@/lib/storage";
 import type {
   AnalyzeFrameResponse,
@@ -423,6 +424,11 @@ export default function TrainProcedurePage() {
       setProcedureError(null);
 
       try {
+        try {
+          await syncLearningStateFromBackend();
+        } catch {
+          // Fall back to the local cache if the learning-state hydrate fails.
+        }
         const nextProcedure = await getProcedure(procedureIdToLoad);
 
         if (cancelled) {
@@ -439,6 +445,8 @@ export default function TrainProcedurePage() {
             ...activeSession,
             ownerUsername: currentUsername,
             updatedAt: new Date().toISOString(),
+          }, {
+            makeActive: true,
           });
         }
         setProcedure(nextProcedure);
@@ -588,8 +596,8 @@ export default function TrainProcedurePage() {
   }, [demoSessionExpired]);
 
   const persistSession = useCallback((nextSession: SessionRecord) => {
-    saveSession(nextSession);
-    setSession(nextSession);
+    const persistedSession = saveSession(nextSession, { makeActive: true });
+    setSession(persistedSession);
   }, []);
 
   const persistSessionPatch = useCallback((nextPatch: Partial<SessionRecord>) => {
@@ -790,6 +798,8 @@ export default function TrainProcedurePage() {
       simulationConfirmed: true,
       learnerFocus: "",
       updatedAt: new Date().toISOString(),
+    }, {
+      makeActive: true,
     });
     setSession(freshSession);
     setCalibration(freshSession.calibration);

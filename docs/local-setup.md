@@ -17,8 +17,9 @@ current demo build.
 - `main AI model`: Anthropic-backed analysis, coaching, debriefs, and knowledge generation
 - `transcription`: OpenAI `gpt-4o-mini-transcribe`
 - `auth persistence`: SQLite at `backend/app/data/auth.db`
+- `learning-state persistence`: SQLite at `backend/app/data/learning_state.db`
 - `review queue persistence`: `backend/app/data/review_cases.json`
-- `session persistence`: browser `localStorage`
+- `browser cache`: `localStorage` for fast hydration, cached debriefs, and offline-friendly logs
 - `recommended hosted shape`: frontend on Vercel, backend on a separate persistent Python host
 
 ## Local URLs
@@ -105,18 +106,22 @@ Two storage layers exist:
   - admin approval state
   - live-session quotas
   - session tokens
+  - persisted session history
+  - active session pointers per procedure
+  - knowledge progress
   - review queue state
 - browser `localStorage`:
-  - live session history
   - cached debriefs
-  - local profile snapshot
-  - knowledge progress
+  - cached learning-state snapshot for quick page loads
+  - local profile snapshot derived from synced sessions
   - offline-first logs
 
 That means:
 
-- changing browsers does not carry over student session history
+- changing browsers still preserves session history and Knowledge Lab progress if the same account signs in against the same persistent backend
+- clearing browser storage removes the local cache, but synced learning state can rehydrate from the backend
 - deleting `backend/app/data/auth.db` resets seeded-account quota state
+- deleting `backend/app/data/learning_state.db` resets synced session history and Knowledge Lab progress
 - deleting `backend/app/data/review_cases.json` clears persisted review queue state
 - restarting the backend reapplies the latest seeded-account definitions from code and environment
 
@@ -188,7 +193,7 @@ curl http://localhost:8001/api/v1/procedures/simple-interrupted-suture
 - Learner voice is not transcribed:
   verify both browser microphone permission and `TRANSCRIPTION_API_KEY`.
 - Review page cannot find a session:
-  session history is browser-local, so use the same browser profile that created it.
+  verify the backend is using persistent storage and the same signed-in account; the browser cache can be rebuilt from backend SQLite, but ephemeral backend storage will lose synced session history.
 
 ## Related Docs
 

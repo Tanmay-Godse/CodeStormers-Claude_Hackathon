@@ -26,6 +26,7 @@ import {
   getSession,
   listSessionsForOwnerProcedure,
   saveSessionDebrief,
+  syncLearningStateFromBackend,
 } from "@/lib/storage";
 import type {
   AdaptiveDrill,
@@ -154,25 +155,48 @@ export default function ReviewPage() {
       return;
     }
 
-    if (!sessionId) {
-      setSession(null);
-      setDebrief(null);
+    const authUsername = authUser.username;
+    let cancelled = false;
+
+    async function hydrateSession() {
+      if (!sessionId) {
+        setSession(null);
+        setDebrief(null);
+        setDebriefError(null);
+        setIsDebriefLoading(false);
+        setIsSessionLoading(false);
+        return;
+      }
+
+      setIsSessionLoading(true);
+
+      try {
+        await syncLearningStateFromBackend();
+      } catch {
+        // Fall back to the local cache if the learning-state hydrate fails.
+      }
+
+      if (cancelled) {
+        return;
+      }
+
+      const existingSession = getSession(sessionId);
+      const ownedSession =
+        existingSession?.ownerUsername === authUsername
+          ? existingSession
+          : null;
+      setSession(ownedSession);
+      setDebrief(ownedSession ? getCachedDebrief(ownedSession, null) : null);
       setDebriefError(null);
       setIsDebriefLoading(false);
       setIsSessionLoading(false);
-      return;
     }
 
-    const existingSession = getSession(sessionId);
-    const ownedSession =
-      existingSession?.ownerUsername === authUser.username
-        ? existingSession
-        : null;
-    setSession(ownedSession);
-    setDebrief(ownedSession ? getCachedDebrief(ownedSession, null) : null);
-    setDebriefError(null);
-    setIsDebriefLoading(false);
-    setIsSessionLoading(false);
+    void hydrateSession();
+
+    return () => {
+      cancelled = true;
+    };
   }, [authUser, sessionId]);
 
   useEffect(() => {

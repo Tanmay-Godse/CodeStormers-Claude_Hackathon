@@ -2,9 +2,12 @@ import { createDefaultCalibration } from "@/lib/geometry";
 import {
   consumeLiveSessionAllowance,
   createPersistedAuthAccount,
+  getPersistedLearningState,
   listDemoAccounts,
   previewPersistedAuthAccount,
   resetDemoAccountQuota,
+  savePersistedKnowledgeProgress,
+  savePersistedLearningSession,
   signInPersistedAuthAccount,
   updatePersistedAuthAccount,
   type PersistedAuthAccount,
@@ -16,6 +19,8 @@ import type {
   DebriefResponse,
   DemoAccountQuotaResetInput,
   EquityModeSettings,
+  KnowledgeProgress,
+  LearningStateSnapshot,
   LearnerProfileSnapshot,
   LoginAuthInput,
   OfflinePracticeLog,
@@ -27,6 +32,16 @@ import type {
 const SESSIONS_KEY = "ai-clinical-skills-coach:sessions";
 const AUTH_USER_KEY = "ai-clinical-skills-coach:auth-user";
 const KNOWLEDGE_PROGRESS_PREFIX = "ai-clinical-skills-coach:knowledge-progress";
+const WORKSPACE_USER_CHANGE_EVENT = "workspace-user-change";
+
+let activeLearningStateSyncKey: string | null = null;
+let activeLearningStateSyncPromise: Promise<LearningStateSnapshot | null> | null =
+  null;
+
+type SaveSessionOptions = {
+  makeActive?: boolean;
+  sync?: boolean;
+};
 
 function activeSessionKey(procedureId: string, ownerUsername?: string) {
   const normalizedOwner =
@@ -75,10 +90,30 @@ export function createDefaultEquityMode(): EquityModeSettings {
   };
 }
 
+export function createDefaultKnowledgeProgress(): KnowledgeProgress {
+  return {
+    answeredCount: 0,
+    completedQuizRounds: 0,
+    correctCount: 0,
+    flashcardsMastered: 0,
+    perfectRounds: 0,
+    rapidfireBestStreak: 0,
+    totalPoints: 0,
+  };
+}
+
 function ensureBrowserStorage() {
   if (typeof window === "undefined") {
     throw new Error("Authentication is available only in the browser.");
   }
+}
+
+function emitWorkspaceUserChange() {
+  if (typeof window === "undefined") {
+    return;
+  }
+
+  window.dispatchEvent(new Event(WORKSPACE_USER_CHANGE_EVENT));
 }
 
 function readSessions(): Record<string, SessionRecord> {
@@ -109,8 +144,14 @@ function readSessions(): Record<string, SessionRecord> {
   }
 }
 
-function writeSessions(sessions: Record<string, SessionRecord>) {
+function writeSessions(
+  sessions: Record<string, SessionRecord>,
+  options?: { emitChange?: boolean },
+) {
   window.localStorage.setItem(SESSIONS_KEY, JSON.stringify(sessions));
+  if (options?.emitChange !== false) {
+    emitWorkspaceUserChange();
+  }
 }
 
 function normalizeSessionRecord(
@@ -139,7 +180,9 @@ function normalizeSessionRecord(
     id: session.id ?? sessionId,
     procedureId: session.procedureId,
     ownerUsername:
-      typeof session.ownerUsername === "string" ? session.ownerUsername : undefined,
+      typeof session.ownerUsername === "string"
+        ? normalizeUsername(session.ownerUsername)
+        : undefined,
     skillLevel: session.skillLevel,
     practiceSurface:
       typeof session.practiceSurface === "string" ? session.practiceSurface : undefined,
@@ -190,6 +233,60 @@ function validatePassword(password: string): string {
   return password;
 }
 
+function readKnowledgeProgress(ownerUsername: string): KnowledgeProgress {
+  if (typeof window === "undefined") {
+    return createDefaultKnowledgeProgress();
+  }
+
+  const raw = window.localStorage.getItem(knowledgeProgressKey(ownerUsername));
+  if (!raw) {
+    return createDefaultKnowledgeProgress();
+  }
+
+  try {
+    const parsed = JSON.parse(raw) as Partial<KnowledgeProgress>;
+    return {
+      answeredCount:
+        typeof parsed.answeredCount === "number" ? parsed.answeredCount : 0,
+      completedQuizRounds:
+        typeof parsed.completedQuizRounds === "number"
+          ? parsed.completedQuizRounds
+          : 0,
+      correctCount:
+        typeof parsed.correctCount === "number" ? parsed.correctCount : 0,
+      flashcardsMastered:
+        typeof parsed.flashcardsMastered === "number"
+          ? parsed.flashcardsMastered
+          : 0,
+      perfectRounds:
+        typeof parsed.perfectRounds === "number" ? parsed.perfectRounds : 0,
+      rapidfireBestStreak:
+        typeof parsed.rapidfireBestStreak === "number"
+          ? parsed.rapidfireBestStreak
+          : 0,
+      totalPoints:
+        typeof parsed.totalPoints === "number" ? parsed.totalPoints : 0,
+    };
+  } catch {
+    return createDefaultKnowledgeProgress();
+  }
+}
+
+function writeKnowledgeProgress(
+  ownerUsername: string,
+  progress: KnowledgeProgress,
+  options?: { emitChange?: boolean },
+) {
+  window.localStorage.setItem(
+    knowledgeProgressKey(ownerUsername),
+    JSON.stringify(progress),
+  );
+
+  if (options?.emitChange !== false) {
+    emitWorkspaceUserChange();
+  }
+}
+
 function toAuthUser(account: PersistedAuthAccount): AuthUser {
   return {
     id: crypto.randomUUID(),
@@ -211,7 +308,244 @@ function toAuthUser(account: PersistedAuthAccount): AuthUser {
 
 function persistAuthUser(user: AuthUser): AuthUser {
   window.localStorage.setItem(AUTH_USER_KEY, JSON.stringify(user));
+  emitWorkspaceUserChange();
   return user;
+}
+
+function getCurrentLearningSyncKey(user: AuthUser): string {
+  return `${user.accountId}:${user.sessionToken ?? "anonymous"}`;
+}
+
+function compareTimestamps(left?: string, right?: string): number {
+  const leftTime = Date.parse(left ?? "");
+  const rightTime = Date.parse(right ?? "");
+
+  if (Number.isNaN(leftTime) && Number.isNaN(rightTime)) {
+    return 0;
+  }
+  if (Number.isNaN(leftTime)) {
+    return -1;
+  }
+  if (Number.isNaN(rightTime)) {
+    return 1;
+  }
+  return leftTime - rightTime;
+}
+
+function mergeKnowledgeProgress(
+  localProgress: KnowledgeProgress,
+  remoteProgress: KnowledgeProgress,
+): KnowledgeProgress {
+  return {
+    answeredCount: Math.max(localProgress.answeredCount, remoteProgress.answeredCount),
+    completedQuizRounds: Math.max(
+      localProgress.completedQuizRounds,
+      remoteProgress.completedQuizRounds,
+    ),
+    correctCount: Math.max(localProgress.correctCount, remoteProgress.correctCount),
+    flashcardsMastered: Math.max(
+      localProgress.flashcardsMastered,
+      remoteProgress.flashcardsMastered,
+    ),
+    perfectRounds: Math.max(localProgress.perfectRounds, remoteProgress.perfectRounds),
+    rapidfireBestStreak: Math.max(
+      localProgress.rapidfireBestStreak,
+      remoteProgress.rapidfireBestStreak,
+    ),
+    totalPoints: Math.max(localProgress.totalPoints, remoteProgress.totalPoints),
+  };
+}
+
+function clearActiveSessionKeysForOwner(ownerUsername: string) {
+  const normalizedOwner = normalizeUsername(ownerUsername);
+  const prefix = `ai-clinical-skills-coach:active:${normalizedOwner}:`;
+  const keysToRemove: string[] = [];
+
+  for (let index = 0; index < window.localStorage.length; index += 1) {
+    const key = window.localStorage.key(index);
+    if (key?.startsWith(prefix)) {
+      keysToRemove.push(key);
+    }
+  }
+
+  for (const key of keysToRemove) {
+    window.localStorage.removeItem(key);
+  }
+}
+
+function applyLearningStateSnapshotToCache(
+  ownerUsername: string,
+  snapshot: LearningStateSnapshot,
+) {
+  const normalizedOwner = normalizeUsername(ownerUsername);
+  const sessions = readSessions();
+  const ownerSessions = Object.values(sessions).filter(
+    (session) => session.ownerUsername === normalizedOwner,
+  );
+  const mergedOwnerSessions = new Map<string, SessionRecord>();
+
+  for (const session of ownerSessions) {
+    mergedOwnerSessions.set(session.id, session);
+  }
+
+  for (const session of snapshot.sessions) {
+    const normalizedSession = normalizeSessionRecord(session.id, {
+      ...session,
+      ownerUsername: normalizedOwner,
+    });
+    if (!normalizedSession) {
+      continue;
+    }
+
+    const existingLocalSession = mergedOwnerSessions.get(normalizedSession.id);
+    if (
+      existingLocalSession &&
+      compareTimestamps(existingLocalSession.updatedAt, normalizedSession.updatedAt) > 0
+    ) {
+      continue;
+    }
+
+    mergedOwnerSessions.set(normalizedSession.id, normalizedSession);
+  }
+
+  for (const [sessionId, session] of Object.entries(sessions)) {
+    if (session.ownerUsername === normalizedOwner) {
+      delete sessions[sessionId];
+    }
+  }
+
+  for (const [sessionId, session] of mergedOwnerSessions.entries()) {
+    sessions[sessionId] = session;
+  }
+
+  writeSessions(sessions, { emitChange: false });
+  clearActiveSessionKeysForOwner(normalizedOwner);
+
+  const activeSessionsByProcedure = new Map<string, SessionRecord>();
+  const remoteActiveProcedureIds = new Set(
+    Object.keys(snapshot.activeSessionIds),
+  );
+
+  for (const [procedureId, sessionId] of Object.entries(snapshot.activeSessionIds)) {
+    const candidate = mergedOwnerSessions.get(sessionId);
+    if (candidate) {
+      activeSessionsByProcedure.set(procedureId, candidate);
+    }
+  }
+
+  for (const session of mergedOwnerSessions.values()) {
+    if (remoteActiveProcedureIds.has(session.procedureId)) {
+      continue;
+    }
+
+    const currentActive = activeSessionsByProcedure.get(session.procedureId);
+    if (
+      !currentActive ||
+      compareTimestamps(session.updatedAt, currentActive.updatedAt) > 0
+    ) {
+      activeSessionsByProcedure.set(session.procedureId, session);
+    }
+  }
+
+  for (const [procedureId, session] of activeSessionsByProcedure.entries()) {
+    window.localStorage.setItem(
+      activeSessionKey(procedureId, normalizedOwner),
+      session.id,
+    );
+  }
+
+  const localKnowledgeProgress = readKnowledgeProgress(normalizedOwner);
+  const mergedKnowledgeProgress = mergeKnowledgeProgress(
+    localKnowledgeProgress,
+    snapshot.knowledgeProgress,
+  );
+  writeKnowledgeProgress(normalizedOwner, mergedKnowledgeProgress, {
+    emitChange: false,
+  });
+  emitWorkspaceUserChange();
+}
+
+async function syncSessionRecordToBackend(
+  session: SessionRecord,
+  options?: { makeActive?: boolean },
+) {
+  const currentUser = getAuthUser();
+  if (!currentUser?.sessionToken) {
+    return;
+  }
+
+  const normalizedOwner = session.ownerUsername
+    ? normalizeUsername(session.ownerUsername)
+    : null;
+  if (normalizedOwner && normalizedOwner !== normalizeUsername(currentUser.username)) {
+    return;
+  }
+
+  const persistedSession = await savePersistedLearningSession({
+    accountId: currentUser.accountId,
+    sessionToken: currentUser.sessionToken,
+    session: {
+      ...session,
+      ownerUsername: normalizedOwner ?? normalizeUsername(currentUser.username),
+    },
+    makeActive: options?.makeActive ?? false,
+  });
+
+  const normalizedSession = normalizeSessionRecord(persistedSession.id, persistedSession);
+  if (!normalizedSession) {
+    return;
+  }
+
+  const currentCachedSession = getSession(normalizedSession.id);
+  if (
+    currentCachedSession &&
+    compareTimestamps(currentCachedSession.updatedAt, normalizedSession.updatedAt) > 0
+  ) {
+    void syncSessionRecordToBackend(currentCachedSession, options).catch(() => {});
+    return;
+  }
+
+  const sessions = readSessions();
+  sessions[normalizedSession.id] = normalizedSession;
+  writeSessions(sessions, { emitChange: false });
+  if (options?.makeActive) {
+    window.localStorage.setItem(
+      activeSessionKey(normalizedSession.procedureId, normalizedSession.ownerUsername),
+      normalizedSession.id,
+    );
+  }
+  emitWorkspaceUserChange();
+}
+
+async function syncKnowledgeProgressToBackend(
+  ownerUsername: string,
+  progress: KnowledgeProgress,
+) {
+  const currentUser = getAuthUser();
+  if (!currentUser?.sessionToken) {
+    return;
+  }
+
+  if (normalizeUsername(currentUser.username) !== normalizeUsername(ownerUsername)) {
+    return;
+  }
+
+  const persistedProgress = await savePersistedKnowledgeProgress({
+    accountId: currentUser.accountId,
+    sessionToken: currentUser.sessionToken,
+    progress,
+  });
+
+  const currentLocalProgress = readKnowledgeProgress(ownerUsername);
+  const mergedProgress = mergeKnowledgeProgress(
+    currentLocalProgress,
+    persistedProgress,
+  );
+  writeKnowledgeProgress(ownerUsername, mergedProgress);
+
+  if (JSON.stringify(mergedProgress) !== JSON.stringify(persistedProgress)) {
+    void syncKnowledgeProgressToBackend(ownerUsername, mergedProgress).catch(() => {});
+  }
 }
 
 function migrateOwnerSessions(previousUsername: string, nextUsername: string) {
@@ -238,7 +572,7 @@ function migrateOwnerSessions(previousUsername: string, nextUsername: string) {
     touchedProcedures.add(session.procedureId);
   }
 
-  writeSessions(sessions);
+  writeSessions(sessions, { emitChange: false });
 
   for (const procedureId of touchedProcedures) {
     const previousKey = activeSessionKey(procedureId, previousNormalized);
@@ -273,6 +607,8 @@ function migrateOwnerSessions(previousUsername: string, nextUsername: string) {
 
     window.localStorage.removeItem(previousKnowledgeProgressKey);
   }
+
+  emitWorkspaceUserChange();
 }
 
 function isValidDebriefResponse(response: Partial<DebriefResponse>): response is DebriefResponse {
@@ -292,15 +628,38 @@ function isValidDebriefResponse(response: Partial<DebriefResponse>): response is
   );
 }
 
-export function saveSession(session: SessionRecord): SessionRecord {
+export function saveSession(
+  session: SessionRecord,
+  options?: SaveSessionOptions,
+): SessionRecord {
+  ensureBrowserStorage();
+
+  const normalizedSession = normalizeSessionRecord(session.id, session);
+  if (!normalizedSession) {
+    throw new Error("Session payload is missing required fields.");
+  }
+
   const sessions = readSessions();
-  sessions[session.id] = session;
-  writeSessions(sessions);
-  window.localStorage.setItem(
-    activeSessionKey(session.procedureId, session.ownerUsername),
-    session.id,
-  );
-  return session;
+  sessions[normalizedSession.id] = normalizedSession;
+  writeSessions(sessions, { emitChange: false });
+  if (options?.makeActive) {
+    window.localStorage.setItem(
+      activeSessionKey(
+        normalizedSession.procedureId,
+        normalizedSession.ownerUsername,
+      ),
+      normalizedSession.id,
+    );
+  }
+  emitWorkspaceUserChange();
+
+  if (options?.sync !== false) {
+    void syncSessionRecordToBackend(normalizedSession, {
+      makeActive: options?.makeActive,
+    }).catch(() => {});
+  }
+
+  return normalizedSession;
 }
 
 export function getSession(sessionId: string): SessionRecord | null {
@@ -332,6 +691,62 @@ export function listSessionsForOwnerProcedure(
   );
 }
 
+export function getKnowledgeProgress(ownerUsername: string): KnowledgeProgress {
+  return readKnowledgeProgress(ownerUsername);
+}
+
+export function saveKnowledgeProgress(
+  ownerUsername: string,
+  progress: KnowledgeProgress,
+): KnowledgeProgress {
+  ensureBrowserStorage();
+
+  const normalizedOwner = normalizeUsername(ownerUsername);
+  writeKnowledgeProgress(normalizedOwner, progress);
+  void syncKnowledgeProgressToBackend(normalizedOwner, progress).catch(() => {});
+  return progress;
+}
+
+export async function syncLearningStateFromBackend(
+  options?: { force?: boolean },
+): Promise<LearningStateSnapshot | null> {
+  ensureBrowserStorage();
+
+  const currentUser = getAuthUser();
+  if (!currentUser?.sessionToken) {
+    return null;
+  }
+
+  const syncKey = getCurrentLearningSyncKey(currentUser);
+  if (
+    !options?.force &&
+    activeLearningStateSyncKey === syncKey &&
+    activeLearningStateSyncPromise
+  ) {
+    return activeLearningStateSyncPromise;
+  }
+
+  const syncPromise = getPersistedLearningState({
+    accountId: currentUser.accountId,
+    sessionToken: currentUser.sessionToken,
+  })
+    .then((snapshot) => {
+      applyLearningStateSnapshotToCache(currentUser.username, snapshot);
+      return snapshot;
+    })
+    .finally(() => {
+      if (activeLearningStateSyncPromise === syncPromise) {
+        activeLearningStateSyncKey = null;
+        activeLearningStateSyncPromise = null;
+      }
+    });
+
+  activeLearningStateSyncKey = syncKey;
+  activeLearningStateSyncPromise = syncPromise;
+
+  return syncPromise;
+}
+
 export async function createAuthAccount(
   input: CreateAuthAccountInput,
 ): Promise<AuthUser> {
@@ -350,7 +765,13 @@ export async function createAuthAccount(
     password,
     role: input.role,
   });
-  return persistAuthUser(toAuthUser(account));
+  const user = persistAuthUser(toAuthUser(account));
+  try {
+    await syncLearningStateFromBackend({ force: true });
+  } catch {
+    // Keep sign-in usable even if the initial learning-state hydrate fails.
+  }
+  return user;
 }
 
 export async function signInAuthUser(input: LoginAuthInput): Promise<AuthUser> {
@@ -367,7 +788,13 @@ export async function signInAuthUser(input: LoginAuthInput): Promise<AuthUser> {
     password,
     role: input.role,
   });
-  return persistAuthUser(toAuthUser(account));
+  const user = persistAuthUser(toAuthUser(account));
+  try {
+    await syncLearningStateFromBackend({ force: true });
+  } catch {
+    // Keep sign-in usable even if the initial learning-state hydrate fails.
+  }
+  return user;
 }
 
 export async function refreshAuthUser(): Promise<AuthUser | null> {
@@ -384,7 +811,7 @@ export async function refreshAuthUser(): Promise<AuthUser | null> {
     return null;
   }
 
-  return persistAuthUser({
+  const nextUser = persistAuthUser({
     ...currentUser,
     accountId: account.id,
     name: account.name,
@@ -399,6 +826,14 @@ export async function refreshAuthUser(): Promise<AuthUser | null> {
     liveSessionRemaining: account.liveSessionRemaining ?? null,
     sessionToken: currentUser.sessionToken ?? account.sessionToken ?? null,
   });
+
+  try {
+    await syncLearningStateFromBackend({ force: true });
+  } catch {
+    // Keep account refresh usable even if the learning-state hydrate fails.
+  }
+
+  return nextUser;
 }
 
 export async function updateAuthUserProfile(
@@ -431,7 +866,7 @@ export async function updateAuthUserProfile(
 
   migrateOwnerSessions(currentUser.username, account.username);
 
-  return persistAuthUser({
+  const nextUser = persistAuthUser({
     ...currentUser,
     accountId: account.id,
     name: account.name,
@@ -446,6 +881,14 @@ export async function updateAuthUserProfile(
     liveSessionRemaining: account.liveSessionRemaining ?? null,
     sessionToken: currentUser.sessionToken ?? account.sessionToken ?? null,
   });
+
+  try {
+    await syncLearningStateFromBackend({ force: true });
+  } catch {
+    // Keep profile updates usable even if the learning-state hydrate fails.
+  }
+
+  return nextUser;
 }
 
 export async function previewAuthAccount(
@@ -669,6 +1112,9 @@ export function clearAuthUser() {
   }
 
   window.localStorage.removeItem(AUTH_USER_KEY);
+  activeLearningStateSyncKey = null;
+  activeLearningStateSyncPromise = null;
+  emitWorkspaceUserChange();
 }
 
 export function buildSessionReviewSignature(
@@ -720,6 +1166,8 @@ export function saveSessionDebrief(
       reviewSignature: buildSessionReviewSignature(session, learnerProfile),
       generatedAt: new Date().toISOString(),
     },
+  }, {
+    makeActive: false,
   });
 }
 
@@ -751,7 +1199,7 @@ export function startFreshSession(
   ownerUsername?: string,
 ): SessionRecord {
   const session = createSession(procedureId, skillLevel, ownerUsername);
-  return saveSession(session);
+  return saveSession(session, { makeActive: true });
 }
 
 export function getOrCreateActiveSession(
@@ -794,6 +1242,8 @@ export function getOrCreateActiveSession(
         ...existing,
         ownerUsername: normalizedOwner,
         updatedAt: new Date().toISOString(),
+      }, {
+        makeActive: true,
       });
     }
   }

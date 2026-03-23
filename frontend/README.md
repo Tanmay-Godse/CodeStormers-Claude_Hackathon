@@ -13,7 +13,7 @@ This package contains the Next.js frontend for Clinical Curator AI.
 - library guide
 - admin review queue
 - developer approval queue
-- browser-local session history and cached learning state
+- browser cache and sync layer for backend learning state
 
 ## Local Commands
 
@@ -63,8 +63,8 @@ or OpenAI.
 
 ## Storage Notes
 
-- session history, cached debriefs, and knowledge progress are browser-local
-- the backend owns the real auth account record, session token, and live-session quota
+- the backend owns the auth account record, session token, live-session quota, synced session history, and Knowledge Lab progress
+- the browser keeps a local cache for fast hydration plus cached debriefs and offline-friendly logs
 - the production app proxies backend calls through `/api/proxy/*`
 
 ## Read Next

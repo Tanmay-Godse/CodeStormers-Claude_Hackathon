@@ -1,9 +1,15 @@
 "use client";
 
-import { useCallback, useSyncExternalStore } from "react";
+import { useCallback, useEffect, useSyncExternalStore } from "react";
 
-import { getAuthUser, listSessionsForOwner } from "@/lib/storage";
+import {
+  getAuthUser,
+  listSessionsForOwner,
+  syncLearningStateFromBackend,
+} from "@/lib/storage";
 import type { AuthUser, SessionRecord } from "@/lib/types";
+
+const WORKSPACE_USER_CHANGE_EVENT = "workspace-user-change";
 
 type WorkspaceUserState = {
   hydrated: boolean;
@@ -40,10 +46,12 @@ function subscribe(listener: () => void) {
   };
 
   window.addEventListener("storage", handleStorage);
+  window.addEventListener(WORKSPACE_USER_CHANGE_EVENT, handleStorage);
 
   return () => {
     listeners.delete(listener);
     window.removeEventListener("storage", handleStorage);
+    window.removeEventListener(WORKSPACE_USER_CHANGE_EVENT, handleStorage);
   };
 }
 
@@ -68,6 +76,14 @@ function getSnapshot() {
 
 export function useWorkspaceUser() {
   const state = useSyncExternalStore(subscribe, getSnapshot, () => emptyState);
+
+  useEffect(() => {
+    if (!state.user?.sessionToken) {
+      return;
+    }
+
+    void syncLearningStateFromBackend().catch(() => {});
+  }, [state.user?.accountId, state.user?.sessionToken]);
 
   const sync = useCallback(() => {
     emitWorkspaceUserChange();

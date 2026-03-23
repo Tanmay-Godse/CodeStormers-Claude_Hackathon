@@ -417,6 +417,16 @@ export type StoredDebrief = {
   generatedAt: string;
 };
 
+export type KnowledgeProgress = {
+  answeredCount: number;
+  completedQuizRounds: number;
+  correctCount: number;
+  flashcardsMastered: number;
+  perfectRounds: number;
+  rapidfireBestStreak: number;
+  totalPoints: number;
+};
+
 export type SessionRecord = {
   id: string;
   procedureId: string;
@@ -432,4 +442,10 @@ export type SessionRecord = {
   debrief?: StoredDebrief;
   createdAt: string;
   updatedAt: string;
+};
+
+export type LearningStateSnapshot = {
+  sessions: SessionRecord[];
+  activeSessionIds: Record<string, string>;
+  knowledgeProgress: KnowledgeProgress;
 };

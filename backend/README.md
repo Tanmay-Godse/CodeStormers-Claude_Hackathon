@@ -13,7 +13,7 @@ This package contains the FastAPI backend for Clinical Curator AI.
 - transcribe learner voice
 - generate fallback coach audio
 - manage review tickets
-- persist seeded accounts and live-session quotas in SQLite
+- persist seeded accounts, live-session quotas, and synced learning state in SQLite
 
 ## Local Commands
 
@@ -50,6 +50,7 @@ Focused runs used most often:
 - `health`
 - `procedures`
 - `auth`
+- `learning-state`
 - `analyze-frame`
 - `coach-chat`
 - `debrief`
