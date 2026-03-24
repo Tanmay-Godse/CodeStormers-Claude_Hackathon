@@ -38,7 +38,7 @@ supportive for learners practicing outside a high-resource lab.
 
 - `frontend`: Next.js 16
 - `backend`: FastAPI
-- `analysis / coach / debrief / knowledge`: Anthropic-backed model requests
+- `analysis / coach / debrief / knowledge`: Anthropic by default, with OpenAI-compatible provider support
 - `speech-to-text`: OpenAI `gpt-4o-mini-transcribe`
 - `speech output`: browser speech first, backend TTS fallback
 - `auth, quota, and learning-state persistence`: SQLite in the backend
@@ -87,6 +87,7 @@ If you are preparing deployment:
 
 - [docs/README.md](docs/README.md): documentation hub
 - [docs/how-to-run.md](docs/how-to-run.md): fastest local run path
+- [docs/cloud-keys.md](docs/cloud-keys.md): exact Anthropic and OpenAI key setup steps
 - [docs/local-setup.md](docs/local-setup.md): full local development guide
 - [docs/api-reference.md](docs/api-reference.md): backend route reference
 - [docs/team-setup.md](docs/team-setup.md): secret handling and release hygiene

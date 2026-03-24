@@ -5,6 +5,7 @@ Use this folder as the documentation entry point for the repo.
 ## Start With
 
 - [how-to-run.md](how-to-run.md): quickest way to run the demo locally
+- [cloud-keys.md](cloud-keys.md): exact Anthropic and OpenAI key setup for local and deployed backends
 - [local-setup.md](local-setup.md): full developer setup, architecture, persistence, and troubleshooting
 - [team-setup.md](team-setup.md): collaboration rules, secret handling, and push checklist
 
@@ -23,14 +24,16 @@ Use this folder as the documentation entry point for the repo.
 
 1. Read [../README.md](../README.md) for the product overview.
 2. Use [how-to-run.md](how-to-run.md) if you just want the app running fast.
-3. Use [local-setup.md](local-setup.md) if you are developing features or debugging behavior.
-4. Use [team-setup.md](team-setup.md) before pushing, deploying, or sharing credentials.
-5. Use the deployment docs only when you are preparing hosted environments.
+3. Use [cloud-keys.md](cloud-keys.md) before adding Anthropic or OpenAI secrets.
+4. Use [local-setup.md](local-setup.md) if you are developing features or debugging behavior.
+5. Use [team-setup.md](team-setup.md) before pushing, deploying, or sharing credentials.
+6. Use the deployment docs only when you are preparing hosted environments.
 
 ## Which Doc Owns What
 
 - `README.md`: high-level repo overview and quick links
 - `docs/how-to-run.md`: fastest local startup path
+- `docs/cloud-keys.md`: canonical cloud-key setup for Anthropic and OpenAI
 - `docs/local-setup.md`: canonical local-development guide
 - `docs/team-setup.md`: public-vs-private rules and team workflow
 - `docs/vercel-deployment.md`: frontend deployment steps and backend wiring

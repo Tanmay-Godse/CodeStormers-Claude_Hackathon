@@ -18,6 +18,10 @@ Why persistence matters:
 
 ## Required Runtime Configuration
 
+For the exact local and hosted key flow, use [cloud-keys.md](cloud-keys.md).
+This section shows the recommended Anthropic-main deployment shape for the
+current demo.
+
 Minimum backend environment:
 
 ```env
@@ -45,6 +49,14 @@ PRIVATE_SEED_ACCOUNTS_JSON=[{"id":"account-developer-team","name":"Developer Tea
 
 Keep placeholder values in tracked files and inject real values through the host
 dashboard or shell at runtime.
+
+Deployment steps for other teammates:
+
+1. Open the backend host's environment-variable or secrets page.
+2. Add the backend variables shown above there.
+3. Keep Anthropic and OpenAI secrets off the frontend deployment.
+4. Redeploy or restart the backend.
+5. Confirm the frontend only has `API_BASE_URL`, not provider keys.
 
 ## Docker Commands
 
@@ -106,6 +118,7 @@ Manual checks:
 
 ## Related Docs
 
+- [cloud-keys.md](cloud-keys.md)
 - [vercel-deployment.md](vercel-deployment.md)
 - [team-setup.md](team-setup.md)
 - [local-setup.md](local-setup.md)

@@ -44,6 +44,7 @@ Focused runs used most often:
 - public student demo accounts are seeded from code
 - optional private admin and developer accounts come from `PRIVATE_SEED_ACCOUNTS_JSON`
 - the backend should run on a persistent host in production, not Vercel serverless
+- Anthropic and OpenAI secrets belong on the backend only; use [../docs/cloud-keys.md](../docs/cloud-keys.md) for the exact setup steps
 
 ## Main Route Groups
 

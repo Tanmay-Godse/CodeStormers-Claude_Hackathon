@@ -38,6 +38,11 @@ The production app proxies browser requests through `/api/proxy/*`, so
 `API_BASE_URL` stays server-side in Vercel and is not exposed to the public
 client bundle.
 
+Do not add `AI_API_KEY`, `ANTHROPIC_API_KEY`, `OPENAI_API_KEY`, or
+`TRANSCRIPTION_API_KEY` to the frontend Vercel project. Those secrets belong to
+the backend only. Use [cloud-keys.md](cloud-keys.md) for the exact backend key
+setup.
+
 ## Backend Alignment
 
 Your backend must separately allow the deployed frontend origin:
@@ -79,6 +84,7 @@ That is by design:
 
 ## Related Docs
 
+- [cloud-keys.md](cloud-keys.md)
 - [backend-deployment.md](backend-deployment.md)
 - [team-setup.md](team-setup.md)
 - [local-setup.md](local-setup.md)

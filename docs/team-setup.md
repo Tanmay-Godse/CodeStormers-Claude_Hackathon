@@ -26,6 +26,10 @@ comments, or commits.
 
 Never commit real keys into tracked files.
 
+When a new teammate needs cloud access, send them
+[cloud-keys.md](cloud-keys.md). Do not send them your personal Anthropic or
+OpenAI key.
+
 Tracked config should keep placeholders such as:
 
 ```env
@@ -33,14 +37,22 @@ AI_API_KEY=SET_IN_ENV_MANAGER
 TRANSCRIPTION_API_KEY=SET_IN_ENV_MANAGER
 ```
 
-Use your shell, host secret manager, or environment manager for real values:
+Use your own local `backend/.env`, your shell, or the backend host secret
+manager for real values:
 
 ```bash
-export AI_API_KEY='your_claude_key_here'
+export AI_API_KEY='your_own_main_provider_key_here'
 export TRANSCRIPTION_API_KEY='your_openai_key_here'
 ```
 
 Restart the backend after changing them.
+
+Key ownership rules:
+
+- each developer keeps their own local keys private
+- shared deployment keys live in the backend host secret manager
+- no Anthropic or OpenAI keys should ever be added to frontend Vercel settings
+- if a secret is exposed, rotate it before continuing
 
 If you need private internal admin or developer accounts in a live environment,
 set them through:
@@ -87,4 +99,5 @@ git status --short
 
 - Frontend on Vercel: [vercel-deployment.md](vercel-deployment.md)
 - Backend on a persistent host: [backend-deployment.md](backend-deployment.md)
+- Cloud key setup: [cloud-keys.md](cloud-keys.md)
 - Full local development guide: [local-setup.md](local-setup.md)

@@ -27,12 +27,14 @@ cp .env.example .env
 
 Before launching the backend, update `backend/.env` with real secrets:
 
-- `AI_API_KEY`: valid Anthropic key for analysis, coaching, debriefs, and knowledge
-- `TRANSCRIPTION_API_KEY`: valid OpenAI key for learner speech transcription
+- choose one main AI provider setup in [cloud-keys.md](cloud-keys.md)
+- `AI_API_KEY`: real key for the selected main AI provider
+- `TRANSCRIPTION_API_KEY`: real OpenAI key for learner speech transcription
 - `FRONTEND_ORIGIN`: keep as `http://localhost:3000` for local development
 
-The checked-in `.env.example` already contains the recommended model and timeout
-defaults for the demo.
+The checked-in `.env.example` already contains the current demo defaults for the
+Anthropic-main setup plus a commented OpenAI-main example. Use
+[cloud-keys.md](cloud-keys.md) for the exact copy-paste blocks.
 
 Run the backend:
 
@@ -122,6 +124,10 @@ pytest
 
 - `invalid x-api-key` or an Anthropic credential error when the live preview starts:
   the backend `AI_API_KEY` is missing, placeholder-only, revoked, or wrong.
+- OpenAI-backed analysis fails as soon as the live preview starts:
+  `AI_API_BASE_URL`, `AI_API_KEY`, or the selected OpenAI main model is wrong.
+- Learner voice is not transcribed:
+  the backend `TRANSCRIPTION_API_KEY` is missing, placeholder-only, revoked, or wrong.
 - Frontend loads but API calls fail:
   `NEXT_PUBLIC_API_BASE_URL` does not match the running backend.
 - Deployed frontend cannot call the backend:
@@ -132,6 +138,7 @@ pytest
 ## Next Docs
 
 - [local-setup.md](local-setup.md)
+- [cloud-keys.md](cloud-keys.md)
 - [team-setup.md](team-setup.md)
 - [vercel-deployment.md](vercel-deployment.md)
 - [api-reference.md](api-reference.md)

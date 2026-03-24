@@ -3,6 +3,7 @@
 This document is the backend route reference.
 
 For local setup, use [local-setup.md](local-setup.md).
+For Anthropic and OpenAI key setup, use [cloud-keys.md](cloud-keys.md).
 For deployment, use [vercel-deployment.md](vercel-deployment.md) and
 [backend-deployment.md](backend-deployment.md).
 
