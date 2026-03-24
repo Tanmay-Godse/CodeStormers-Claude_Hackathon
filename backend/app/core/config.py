@@ -1,5 +1,69 @@
-from pydantic import AliasChoices, Field
+from pathlib import Path
+
+from dotenv import dotenv_values
+from pydantic import AliasChoices, Field, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
+
+from app.providers.base import is_placeholder_api_key
+
+
+BACKEND_ENV_FILE = Path(__file__).resolve().parents[2] / ".env"
+AI_API_KEY_ALIASES = ("AI_API_KEY", "OPENAI_API_KEY", "ANTHROPIC_API_KEY")
+TRANSCRIPTION_API_KEY_ALIASES = (
+    "TRANSCRIPTION_API_KEY",
+    "OPENAI_TRANSCRIPTION_API_KEY",
+    "OPENAI_API_KEY",
+)
+
+
+def _load_local_dotenv() -> dict[str, str]:
+    if not BACKEND_ENV_FILE.exists():
+        return {}
+
+    loaded_values = dotenv_values(BACKEND_ENV_FILE)
+    return {
+        key: value
+        for key, value in loaded_values.items()
+        if isinstance(key, str) and isinstance(value, str)
+    }
+
+
+def _normalize_config_value(value: str | None) -> str | None:
+    if value is None:
+        return None
+
+    normalized = value.strip()
+    if not normalized:
+        return None
+
+    return normalized
+
+
+def _is_real_secret(value: str | None) -> bool:
+    normalized = _normalize_config_value(value)
+    if normalized is None:
+        return False
+    if normalized.upper() == "EMPTY":
+        return False
+    return not is_placeholder_api_key(normalized)
+
+
+def _prefer_real_local_secret(
+    resolved_value: str,
+    *,
+    local_env: dict[str, str],
+    aliases: tuple[str, ...],
+) -> str:
+    for alias in aliases:
+        local_value = _normalize_config_value(local_env.get(alias))
+        if _is_real_secret(local_value):
+            return local_value
+
+    current_value = _normalize_config_value(resolved_value)
+    if current_value is None:
+        return resolved_value
+
+    return current_value
 
 
 class Settings(BaseSettings):
@@ -150,8 +214,31 @@ class Settings(BaseSettings):
         ),
     )
 
+    @model_validator(mode="after")
+    def prefer_local_file_secrets(self) -> "Settings":
+        local_env = _load_local_dotenv()
+        object.__setattr__(
+            self,
+            "ai_api_key",
+            _prefer_real_local_secret(
+                self.ai_api_key,
+                local_env=local_env,
+                aliases=AI_API_KEY_ALIASES,
+            ),
+        )
+        object.__setattr__(
+            self,
+            "transcription_api_key",
+            _prefer_real_local_secret(
+                self.transcription_api_key,
+                local_env=local_env,
+                aliases=TRANSCRIPTION_API_KEY_ALIASES,
+            ),
+        )
+        return self
+
     model_config = SettingsConfigDict(
-        env_file=".env",
+        env_file=BACKEND_ENV_FILE,
         env_file_encoding="utf-8",
         case_sensitive=False,
     )

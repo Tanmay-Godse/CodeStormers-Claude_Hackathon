@@ -53,6 +53,10 @@ Use [cloud-keys.md](cloud-keys.md) for the exact local `backend/.env` blocks for
 - OpenAI main AI plus OpenAI transcription
 - shell-exported secrets instead of storing keys in `backend/.env`
 
+For the least confusing local setup, add your real keys directly to
+`backend/.env` and start the server. Real keys in that file take priority over
+old shell-exported values. If you update a key, restart the backend.
+
 Run it:
 
 ```bash

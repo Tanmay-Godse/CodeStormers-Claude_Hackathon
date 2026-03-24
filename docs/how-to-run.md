@@ -36,6 +36,11 @@ The checked-in `.env.example` already contains the current demo defaults for the
 Anthropic-main setup plus a commented OpenAI-main example. Use
 [cloud-keys.md](cloud-keys.md) for the exact copy-paste blocks.
 
+For local development, the simplest path is now the recommended one: put your
+real keys in `backend/.env` and run the backend. Real key values in that file
+take priority over stale shell-exported secrets. If you change a key, restart
+the backend.
+
 Run the backend:
 
 ```bash

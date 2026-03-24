@@ -147,6 +147,10 @@ cd backend
 uvicorn app.main:app --reload --port 8001
 ```
 
+For most local setups, editing `backend/.env` is simpler than exporting
+secrets. Real keys in `backend/.env` take priority over stale shell-exported
+values, while placeholder values still let shell exports work.
+
 This works well when:
 
 - your local `backend/.env` is shared across several team members' machines as a
