@@ -86,7 +86,6 @@ If you are preparing deployment:
 ## Documentation
 
 - [docs/README.md](docs/README.md): documentation hub
-- [docs/project-index.md](docs/project-index.md): deep codebase map, architecture, and file ownership guide
 - [docs/how-to-run.md](docs/how-to-run.md): fastest local run path
 - [docs/cloud-keys.md](docs/cloud-keys.md): exact Anthropic and OpenAI key setup steps
 - [docs/local-setup.md](docs/local-setup.md): full local development guide

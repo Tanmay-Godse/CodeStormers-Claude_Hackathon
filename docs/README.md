@@ -17,24 +17,21 @@ Use this folder as the documentation entry point for the repo.
 ## Reference Docs
 
 - [api-reference.md](api-reference.md): backend route and payload reference
-- [project-index.md](project-index.md): deep codebase map, architecture, and file ownership guide
 - [../backend/README.md](../backend/README.md): backend package overview and commands
 - [../frontend/README.md](../frontend/README.md): frontend package overview and commands
 
 ## Recommended Reading Order
 
 1. Read [../README.md](../README.md) for the product overview.
-2. Read [project-index.md](project-index.md) for the deep architecture and file map.
-3. Use [how-to-run.md](how-to-run.md) if you just want the app running fast.
-4. Use [cloud-keys.md](cloud-keys.md) before adding Anthropic or OpenAI secrets.
-5. Use [local-setup.md](local-setup.md) if you are developing features or debugging behavior.
-6. Use [team-setup.md](team-setup.md) before pushing, deploying, or sharing credentials.
-7. Use the deployment docs only when you are preparing hosted environments.
+2. Use [how-to-run.md](how-to-run.md) if you just want the app running fast.
+3. Use [cloud-keys.md](cloud-keys.md) before adding Anthropic or OpenAI secrets.
+4. Use [local-setup.md](local-setup.md) if you are developing features or debugging behavior.
+5. Use [team-setup.md](team-setup.md) before pushing, deploying, or sharing credentials.
+6. Use the deployment docs only when you are preparing hosted environments.
 
 ## Which Doc Owns What
 
 - `README.md`: high-level repo overview and quick links
-- `docs/project-index.md`: deep architecture, code map, and file ownership guide
 - `docs/how-to-run.md`: fastest local startup path
 - `docs/cloud-keys.md`: canonical cloud-key setup for Anthropic and OpenAI
 - `docs/local-setup.md`: canonical local-development guide
