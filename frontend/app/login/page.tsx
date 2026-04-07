@@ -6,34 +6,12 @@ import { Suspense, useEffect, useState } from "react";
 
 import {
   clearAuthUser,
+  createAuthAccount,
   getAuthUser,
-  previewAuthAccount,
   refreshAuthUser,
   signInAuthUser,
 } from "@/lib/storage";
-import type { AuthUser, UserRole } from "@/lib/types";
-
-type AuthStep = "identify" | "sign-in";
-
-type PreviewedAccount = {
-  adminApprovalStatus: AuthUser["adminApprovalStatus"];
-  isDeveloper: boolean;
-  isSeeded: boolean;
-  liveSessionLimit?: number | null;
-  liveSessionRemaining?: number | null;
-  liveSessionUsed: number;
-  name: string;
-  role: UserRole;
-  requestedRole?: "admin" | null;
-  username: string;
-};
-
-const JUDGE_DEMO_ACCOUNTS = [
-  "Student_1@gmail.com",
-  "Student_2@gmail.com",
-  "Student_3@gmail.com",
-  "Student_4@gmail.com",
-] as const;
+import type { AuthMode, AuthUser, UserRole } from "@/lib/types";
 
 function getDefaultDestination(account: Pick<AuthUser, "isDeveloper" | "role">) {
   if (account.isDeveloper) {
@@ -54,14 +32,17 @@ function LoginPageContent() {
   const nextPath = searchParams.get("next");
 
   const [currentUser, setCurrentUser] = useState<AuthUser | null>(null);
-  const [step, setStep] = useState<AuthStep>("identify");
-  const [identifier, setIdentifier] = useState("");
-  const [previewedAccount, setPreviewedAccount] = useState<PreviewedAccount | null>(
-    null,
-  );
-  const [password, setPassword] = useState("");
+  const [mode, setMode] = useState<AuthMode>("sign-in");
+  const [role, setRole] = useState<UserRole>(requestedRole ?? "student");
+  const [signInUsername, setSignInUsername] = useState("");
+  const [signInPassword, setSignInPassword] = useState("");
+  const [createName, setCreateName] = useState("");
+  const [createUsername, setCreateUsername] = useState("");
+  const [createPassword, setCreatePassword] = useState("");
+  const [confirmPassword, setConfirmPassword] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
+  const activeRole = requestedRole ?? role;
 
   function resolveDestination(targetAccount: Pick<AuthUser, "isDeveloper" | "role">) {
     if (requestedRole && targetAccount.role === requestedRole) {
@@ -106,34 +87,6 @@ function LoginPageContent() {
   const requestedRoleMismatch =
     currentUser && requestedRole ? currentUser.role !== requestedRole : false;
 
-  async function handleIdentify(event: FormEvent<HTMLFormElement>) {
-    event.preventDefault();
-    setError(null);
-    setIsSubmitting(true);
-
-    try {
-      const matchedAccount = await previewAuthAccount(identifier);
-
-      if (matchedAccount) {
-        setPreviewedAccount(matchedAccount);
-        setPassword("");
-        setStep("sign-in");
-      } else {
-        router.push(
-          `/access-required?username=${encodeURIComponent(identifier.trim())}`,
-        );
-      }
-    } catch (lookupError) {
-      setError(
-        lookupError instanceof Error
-          ? lookupError.message
-          : "We could not look up that workspace account.",
-      );
-    } finally {
-      setIsSubmitting(false);
-    }
-  }
-
   async function handleSignIn(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     setError(null);
@@ -141,8 +94,40 @@ function LoginPageContent() {
 
     try {
       const user = await signInAuthUser({
-        username: previewedAccount?.username ?? identifier,
-        password,
+        username: signInUsername,
+        password: signInPassword,
+        role: activeRole,
+      });
+      setCurrentUser(user);
+      router.push(resolveDestination(user));
+    } catch (submitError) {
+      setError(
+        submitError instanceof Error
+          ? submitError.message
+          : "Sign-in failed. Check your username and password.",
+      );
+    } finally {
+      setIsSubmitting(false);
+    }
+  }
+
+  async function handleCreateAccount(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    setError(null);
+
+    if (createPassword !== confirmPassword) {
+      setError("Passwords do not match. Re-enter them and try again.");
+      return;
+    }
+
+    setIsSubmitting(true);
+
+    try {
+      const user = await createAuthAccount({
+        name: createName,
+        username: createUsername,
+        password: createPassword,
+        role: activeRole,
       });
       setCurrentUser(user);
       router.push(resolveDestination(user));
@@ -168,28 +153,10 @@ function LoginPageContent() {
   function handleSignOut() {
     clearAuthUser();
     setCurrentUser(null);
-    setPreviewedAccount(null);
     setError(null);
-    setStep("identify");
-    setIdentifier("");
-    setPassword("");
+    setMode("sign-in");
+    setSignInPassword("");
   }
-
-  function handleBack() {
-    setError(null);
-    setPassword("");
-    setStep("identify");
-  }
-
-  const cardTitle =
-    step === "identify"
-      ? "Welcome back"
-      : "Enter your password";
-
-  const cardCopy =
-    step === "identify"
-      ? "Enter one of the fixed demo usernames below. Self-service signup is disabled while the project is deployed publicly, so unknown usernames are routed back to the developer team."
-      : "This workspace uses fixed demo accounts with live-session limits. Enter the password for the matched username to continue.";
 
   return (
     <main className="page-shell auth-shell">
@@ -201,13 +168,16 @@ function LoginPageContent() {
                 <span className="brand-mark">AC</span>
                 <span>Clinical Curator</span>
               </div>
-              <span className="pill">Workspace sign-in</span>
+              <span className="pill">Workspace auth</span>
             </div>
 
             <div className="auth-stage-copy">
               <span className="eyebrow">Secure entry</span>
-              <h1 className="auth-login-title">{cardTitle}</h1>
-              <p className="auth-login-copy">{cardCopy}</p>
+              <h1 className="auth-login-title">Sign in or create your account</h1>
+              <p className="auth-login-copy">
+                Sign in with your username and password, or create a new account and
+                start practicing right away.
+              </p>
             </div>
 
             <div className="auth-flow-meta">
@@ -266,6 +236,13 @@ function LoginPageContent() {
                     is {currentUser.role}. Continue to the matching workspace or sign out.
                   </p>
                 ) : null}
+                {currentUser.requestedRole === "admin" &&
+                currentUser.adminApprovalStatus === "pending" ? (
+                  <p className="feedback-copy" style={{ marginTop: 12 }}>
+                    Admin reviewer access is still pending developer approval. You can
+                    keep using the student workspace until that request is approved.
+                  </p>
+                ) : null}
                 <div className="button-row" style={{ marginTop: 16 }}>
                   <button className="button-primary" onClick={handleContinue} type="button">
                     Continue to Workspace
@@ -275,137 +252,195 @@ function LoginPageContent() {
                   </button>
                 </div>
               </div>
-            ) : null}
-
-            {error ? (
-              <div className="feedback-block">
-                <div className="feedback-header">
-                  <strong>Authentication issue</strong>
-                  <span className="status-badge status-unsafe">attention</span>
-                </div>
-                <p className="feedback-copy" style={{ marginTop: 12 }}>
-                  {error}
-                </p>
-              </div>
-            ) : null}
-
-            {step === "identify" ? (
+            ) : (
               <>
-                <div className="feedback-block">
-                  <div className="feedback-header">
-                    <strong>Judge demo accounts</strong>
-                    <span className="pill">Password: CODESTORMERS</span>
-                  </div>
-                  <div className="dashboard-progress-list" style={{ marginTop: 16 }}>
-                    {JUDGE_DEMO_ACCOUNTS.map((account) => (
-                      <div className="dashboard-progress-item" key={account}>
-                        <div className="dashboard-progress-copy">
-                          <strong>{account}</strong>
-                          <p>Fixed student demo account with 10 live sessions.</p>
-                        </div>
-                      </div>
-                    ))}
-                  </div>
+                <div className="auth-mode-switch">
+                  <button
+                    className={`auth-mode-button ${mode === "sign-in" ? "is-active" : ""}`}
+                    onClick={() => setMode("sign-in")}
+                    type="button"
+                  >
+                    Sign In
+                  </button>
+                  <button
+                    className={`auth-mode-button ${mode === "create-account" ? "is-active" : ""}`}
+                    onClick={() => setMode("create-account")}
+                    type="button"
+                  >
+                    Create Account
+                  </button>
                 </div>
 
-                <form className="auth-form" onSubmit={(event) => void handleIdentify(event)}>
-                <label className="field-label">
-                  Username only
-                  <input
-                    autoComplete="username"
-                    className="text-input"
-                    onChange={(event) => setIdentifier(event.target.value)}
-                    placeholder="Student_1@gmail.com"
-                    required
-                    value={identifier}
-                  />
-                </label>
+                <div className="role-switch">
+                  <button
+                    className={`role-card ${role === "student" ? "is-active" : ""}`}
+                    disabled={Boolean(requestedRole)}
+                    onClick={() => setRole("student")}
+                    type="button"
+                  >
+                    <span className="feature-index">Student</span>
+                    <strong>Practice and review</strong>
+                    <p className="panel-copy">
+                      Use the trainer, review your sessions, and work through the
+                      Knowledge Lab.
+                    </p>
+                  </button>
+                  <button
+                    className={`role-card ${role === "admin" ? "is-active" : ""}`}
+                    disabled={Boolean(requestedRole)}
+                    onClick={() => setRole("admin")}
+                    type="button"
+                  >
+                    <span className="feature-index">Admin</span>
+                    <strong>Review flagged cases</strong>
+                    <p className="panel-copy">
+                      Request access to the admin review queue for human validation
+                      workflows.
+                    </p>
+                  </button>
+                </div>
 
-                <p className="auth-helper-copy">
-                  Use the fixed username for this account. New emails are managed by
-                  the developer team while the demo is public.
-                </p>
-
-                <button className="button-primary" disabled={isSubmitting} type="submit">
-                  {isSubmitting ? "Checking Account..." : "Continue"}
-                </button>
-                </form>
-              </>
-            ) : null}
-
-            {step === "sign-in" && previewedAccount ? (
-              <>
-                <div className="auth-account-preview">
-                  <div className="auth-account-header">
-                    <div>
-                      <span className="metric-label">Account found</span>
-                      <strong>{previewedAccount.name}</strong>
+                {error ? (
+                  <div className="feedback-block">
+                    <div className="feedback-header">
+                      <strong>Authentication issue</strong>
+                      <span className="status-badge status-unsafe">attention</span>
                     </div>
-                    <span className="pill">
-                      {previewedAccount.isDeveloper
-                        ? "developer"
-                        : previewedAccount.role}
-                    </span>
+                    <p className="feedback-copy" style={{ marginTop: 12 }}>
+                      {error}
+                    </p>
                   </div>
-                  <p className="panel-copy">
-                    Username: <strong>{previewedAccount.username}</strong>
+                ) : null}
+
+                {mode === "sign-in" ? (
+                  <form className="auth-form" onSubmit={(event) => void handleSignIn(event)}>
+                    <label className="field-label">
+                      Username
+                      <input
+                        autoComplete="username"
+                        className="text-input"
+                        onChange={(event) => setSignInUsername(event.target.value)}
+                        placeholder="student01 or faculty.reviewer"
+                        required
+                        value={signInUsername}
+                      />
+                    </label>
+
+                    <label className="field-label">
+                      Password
+                      <input
+                        autoComplete="current-password"
+                        className="text-input"
+                        minLength={8}
+                        onChange={(event) => setSignInPassword(event.target.value)}
+                        placeholder="Enter your password"
+                        required
+                        type="password"
+                        value={signInPassword}
+                      />
+                    </label>
+
+                    <p className="auth-helper-copy">
+                      You are signing in for the <strong>{activeRole}</strong> workspace.
+                    </p>
+
+                    <button className="button-primary" disabled={isSubmitting} type="submit">
+                      {isSubmitting ? "Signing In..." : "Sign In"}
+                    </button>
+                  </form>
+                ) : (
+                  <form
+                    className="auth-form"
+                    onSubmit={(event) => void handleCreateAccount(event)}
+                  >
+                    <label className="field-label">
+                      Display name
+                      <input
+                        autoComplete="name"
+                        className="text-input"
+                        onChange={(event) => setCreateName(event.target.value)}
+                        placeholder={activeRole === "admin" ? "Faculty Reviewer" : "Student Name"}
+                        required
+                        value={createName}
+                      />
+                    </label>
+
+                    <div className="inline-form-row">
+                      <label className="field-label">
+                        Username
+                        <input
+                          autoComplete="username"
+                          className="text-input"
+                          onChange={(event) => setCreateUsername(event.target.value)}
+                          placeholder="Choose a username"
+                          required
+                          value={createUsername}
+                        />
+                      </label>
+
+                      <label className="field-label">
+                        Role
+                        <select
+                          disabled={Boolean(requestedRole)}
+                          onChange={(event) => setRole(event.target.value as UserRole)}
+                          value={activeRole}
+                        >
+                          <option value="student">Student</option>
+                          <option value="admin">Admin reviewer</option>
+                        </select>
+                      </label>
+                    </div>
+
+                    <div className="inline-form-row">
+                      <label className="field-label">
+                        Password
+                        <input
+                          autoComplete="new-password"
+                          className="text-input"
+                          minLength={8}
+                          onChange={(event) => setCreatePassword(event.target.value)}
+                          placeholder="At least 8 characters"
+                          required
+                          type="password"
+                          value={createPassword}
+                        />
+                      </label>
+
+                      <label className="field-label">
+                        Confirm password
+                        <input
+                          autoComplete="new-password"
+                          className="text-input"
+                          minLength={8}
+                          onChange={(event) => setConfirmPassword(event.target.value)}
+                          placeholder="Re-enter password"
+                          required
+                          type="password"
+                          value={confirmPassword}
+                        />
+                      </label>
+                    </div>
+
+                    <p className="auth-helper-copy">
+                      {activeRole === "admin"
+                        ? "Admin reviewer requests are created first, then wait for developer approval while the account can still use the student workspace."
+                        : "This creates a normal workspace account and signs you in immediately."}
+                    </p>
+
+                    <button className="button-primary" disabled={isSubmitting} type="submit">
+                      {isSubmitting ? "Creating Account..." : "Create Account"}
+                    </button>
+                  </form>
+                )}
+
+                <div className="auth-compact-footer">
+                  <p className="fine-print">
+                    Normal self-service accounts are enabled. Existing seeded demo accounts
+                    and developer-managed review flows still continue to work.
                   </p>
-                  {typeof previewedAccount.liveSessionRemaining === "number" ? (
-                    <>
-                      <p className="panel-copy" style={{ marginTop: 12 }}>
-                        Live sessions remaining:{" "}
-                        <strong>
-                          {previewedAccount.liveSessionRemaining}
-                          {typeof previewedAccount.liveSessionLimit === "number"
-                            ? ` / ${previewedAccount.liveSessionLimit}`
-                            : ""}
-                        </strong>
-                        .
-                      </p>
-                      <p className="panel-copy" style={{ marginTop: 12 }}>
-                        Used so far: <strong>{previewedAccount.liveSessionUsed}</strong>.
-                      </p>
-                    </>
-                  ) : null}
                 </div>
-
-                <form className="auth-form" onSubmit={(event) => void handleSignIn(event)}>
-                  <label className="field-label">
-                    Password
-                    <input
-                      autoComplete="current-password"
-                      className="text-input"
-                      minLength={8}
-                      onChange={(event) => setPassword(event.target.value)}
-                      placeholder="Enter your password"
-                      required
-                      type="password"
-                      value={password}
-                    />
-                  </label>
-
-                  <div className="button-row">
-                    <button className="button-ghost" onClick={handleBack} type="button">
-                      Back
-                    </button>
-                    <button
-                      className="button-primary"
-                      disabled={isSubmitting}
-                      type="submit"
-                    >
-                      {isSubmitting ? "Signing In..." : "Continue"}
-                    </button>
-                  </div>
-                </form>
               </>
-            ) : null}
-
-            <div className="auth-compact-footer">
-              <p className="fine-print">
-                This public demo uses fixed backend-managed accounts and live-session
-                quotas to reduce API abuse while the project is still in demo stage.
-              </p>
-            </div>
+            )}
           </article>
         </section>
       </div>

@@ -4,7 +4,7 @@ import os
 import secrets
 import sqlite3
 from datetime import datetime, timezone
-from pathlib import Path
+from uuid import uuid4
 
 from app.core.storage_paths import runtime_data_path
 from app.schemas.auth import (
@@ -109,30 +109,128 @@ class AuthPermissionError(PermissionError):
 
 def preview_auth_account(identifier: str) -> AuthAccountPreview:
     normalized_identifier = _validate_identifier(identifier)
-    account = _resolve_account_by_username(normalized_identifier)
+    account = _resolve_account_by_username(
+        normalized_identifier,
+        seeded_only=False,
+    )
 
     if account is None:
         raise AuthAccountNotFoundError(
-            "That username is not available in this demo. Please contact the developers for a fixed demo email."
+            "No workspace account was found for that username."
         )
 
     return account
 
 
-def create_auth_account(_payload: CreateAuthAccountRequest) -> AuthAccountPreview:
-    raise AuthPermissionError(
-        "Self-service account creation is disabled for this demo. Please contact the developers for a fixed demo email."
+def create_auth_account(payload: CreateAuthAccountRequest) -> AuthAccountPreview:
+    name = payload.name.strip()
+    if not name:
+        raise AuthValidationError("Display name is required.")
+
+    username = _validate_username(payload.username)
+    password = _validate_password(payload.password)
+
+    existing_account = _resolve_account_by_username(username, seeded_only=False)
+    if existing_account is not None:
+        raise AuthAccountConflictError(
+            "That username is already registered. Sign in instead."
+        )
+
+    if username in _configured_seed_usernames():
+        raise AuthAccountConflictError(
+            "That username is reserved for a managed account. Sign in with it instead or choose another username."
+        )
+
+    created_at = _now_iso()
+    account_id = f"account-{uuid4()}"
+    password_salt = _generate_password_salt()
+    session_token = secrets.token_urlsafe(32)
+
+    account_role = "student"
+    requested_role = None
+    admin_approval_status = ADMIN_APPROVAL_NONE
+    live_session_limit = DEFAULT_LIVE_SESSION_LIMIT
+
+    if payload.role == "admin":
+        requested_role = "admin"
+        admin_approval_status = ADMIN_APPROVAL_PENDING
+
+    with _connect() as connection:
+        try:
+            connection.execute(
+                """
+                INSERT INTO auth_accounts (
+                    id,
+                    name,
+                    username,
+                    normalized_display_name,
+                    password_hash,
+                    password_salt,
+                    password_scheme,
+                    role,
+                    is_developer,
+                    is_seeded,
+                    requested_role,
+                    admin_approval_status,
+                    live_session_limit,
+                    live_session_used,
+                    session_token,
+                    created_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    account_id,
+                    name,
+                    username,
+                    _normalize_display_name(name),
+                    _hash_password(
+                        password=password,
+                        salt=password_salt,
+                        scheme=CURRENT_PASSWORD_SCHEME,
+                    ),
+                    password_salt,
+                    CURRENT_PASSWORD_SCHEME,
+                    account_role,
+                    0,
+                    0,
+                    requested_role,
+                    admin_approval_status,
+                    live_session_limit,
+                    0,
+                    session_token,
+                    created_at,
+                ),
+            )
+        except sqlite3.IntegrityError as exc:
+            raise AuthAccountConflictError(
+                "That username is already registered. Sign in instead."
+            ) from exc
+
+    return AuthAccountPreview(
+        id=account_id,
+        name=name,
+        username=username,
+        role=account_role,
+        is_developer=False,
+        is_seeded=False,
+        requested_role=requested_role,
+        admin_approval_status=admin_approval_status,
+        live_session_limit=live_session_limit,
+        live_session_used=0,
+        live_session_remaining=live_session_limit,
+        session_token=session_token,
+        created_at=created_at,
     )
 
 
 def sign_in_auth_user(payload: SignInAuthRequest) -> AuthAccountPreview:
     identifier = _validate_identifier(payload.identifier)
     password = _validate_password(payload.password)
-    account = _resolve_account_by_username(identifier)
+    account = _resolve_account_by_username(identifier, seeded_only=False)
 
     if account is None:
         raise AuthAccountNotFoundError(
-            "That username is not available in this demo. Please contact the developers for a fixed demo email."
+            "No workspace account was found for that username. Create an account first."
         )
 
     password_state = _read_password_state(account.id)
@@ -156,6 +254,22 @@ def sign_in_auth_user(payload: SignInAuthRequest) -> AuthAccountPreview:
         _upgrade_password_hash(account.id, password)
 
     if payload.role and account.role != payload.role:
+        if (
+            payload.role == "admin"
+            and account.requested_role == "admin"
+            and account.admin_approval_status == ADMIN_APPROVAL_PENDING
+        ):
+            raise AuthAccountConflictError(
+                "Admin access is still pending developer approval. Sign in to the student workspace for now."
+            )
+        if (
+            payload.role == "admin"
+            and account.requested_role == "admin"
+            and account.admin_approval_status == ADMIN_APPROVAL_REJECTED
+        ):
+            raise AuthAccountConflictError(
+                "Admin access was not approved for this account. Sign in to the student workspace instead."
+            )
         raise AuthAccountConflictError(
             f"This account is registered as {account.role}. Use the matching workspace."
         )

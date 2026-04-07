@@ -65,19 +65,19 @@ That means:
 
 ## Public Demo Notes
 
-The deployed login page intentionally shows only the four public judge accounts.
+The deployed login page supports normal self-service signup and sign-in.
 
-That is by design:
+The seeded public judge accounts are still useful for a controlled demo:
 
-- fixed public student accounts reduce API abuse
+- fixed public student accounts reduce API abuse during judging
 - each account has `10` live sessions
-- unknown usernames route to `/access-required`
 - quota resets are reserved for admin and developer accounts
+- new admin reviewer accounts still require developer approval before they can use `/admin/reviews`
 
 ## Post-Deploy Smoke Checklist
 
 1. Open `/login`.
-2. Sign in with one judge account.
+2. Create a normal student account or sign in with one judge account.
 3. Confirm `/dashboard`, `/knowledge`, and `/library` load.
 4. Start a live session and confirm analysis requests reach the backend.
 5. Confirm `FRONTEND_ORIGIN` matches the deployed frontend URL exactly.

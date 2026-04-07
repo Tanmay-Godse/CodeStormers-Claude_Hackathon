@@ -75,7 +75,10 @@ Open:
 http://localhost:3000/login
 ```
 
-Public student demo accounts:
+You can either create a normal account on `/login` or use one of the seeded
+demo accounts below.
+
+Seeded public student demo accounts:
 
 - `Student_1@gmail.com`
 - `Student_2@gmail.com`
@@ -85,11 +88,11 @@ Public student demo accounts:
 
 Public demo behavior:
 
-- self-service signup is disabled
-- unknown usernames route to `/access-required`
+- self-service signup is enabled for normal student accounts
+- new admin reviewer accounts start in the student workspace with a pending admin access request
 - each public student account has `10` live sessions
 - the live-session allowance is consumed when a camera run starts
-- only admin or developer accounts can reset those limits
+- only admin or developer accounts can reset seeded-account limits
 
 ## 4. Run The Main Smoke Flow
 
@@ -127,6 +130,9 @@ pytest
 
 ## Common Issues
 
+- Account creation works but admin login is denied:
+  that account is still pending developer approval, so sign in through the
+  student workspace until the request is approved.
 - `invalid x-api-key` or an Anthropic credential error when the live preview starts:
   the backend `AI_API_KEY` is missing, placeholder-only, revoked, or wrong.
 - OpenAI-backed analysis fails as soon as the live preview starts:

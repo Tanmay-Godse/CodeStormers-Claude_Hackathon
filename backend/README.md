@@ -13,7 +13,7 @@ This package contains the FastAPI backend for Clinical Curator AI.
 - transcribe learner voice
 - generate fallback coach audio
 - manage review tickets
-- persist seeded accounts, live-session quotas, and synced learning state in SQLite
+- persist self-service accounts, seeded accounts, live-session quotas, and synced learning state in SQLite
 
 ## Local Commands
 
@@ -41,7 +41,7 @@ Focused runs used most often:
 ## Runtime Notes
 
 - persistent runtime data lives under `backend/app/data`
-- public student demo accounts are seeded from code
+- public student demo accounts are seeded from code and normal self-service accounts are also supported
 - optional private admin and developer accounts come from `PRIVATE_SEED_ACCOUNTS_JSON`
 - the backend should run on a persistent host in production, not Vercel serverless
 - Anthropic and OpenAI secrets belong on the backend only; use [../docs/cloud-keys.md](../docs/cloud-keys.md) for the exact setup steps

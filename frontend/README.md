@@ -5,7 +5,7 @@ This package contains the Next.js frontend for Clinical Curator AI.
 ## Responsibilities
 
 - shared app shell and navigation
-- login and access-required flows
+- login and legacy access-required flows
 - dashboard and profile surfaces
 - live trainer UI
 - review page and debrief rendering
@@ -51,7 +51,7 @@ or OpenAI.
 ## Route Surface
 
 - `/login`
-- `/access-required`
+- `/access-required` legacy fallback route
 - `/dashboard`
 - `/train/[procedure]`
 - `/review/[sessionId]`

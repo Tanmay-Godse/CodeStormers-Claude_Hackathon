@@ -16,11 +16,11 @@ supportive for learners practicing outside a high-resource lab.
 - review and debrief workflow after each run
 - Knowledge Lab with rapidfire, quiz, and flashcards
 - admin review queue for low-confidence or escalated cases
-- quota-managed public demo accounts for safe judging access
+- self-service accounts plus quota-managed public demo accounts for judging
 
 ## Core Experience
 
-1. Sign in to a demo account.
+1. Sign in or create an account.
 2. Start a live session from the dashboard.
 3. Practice on a safe simulated surface.
 4. Receive coaching and step-level feedback during the run.
@@ -32,7 +32,7 @@ supportive for learners practicing outside a high-resource lab.
 - simulation-only by design, with safe surfaces built into the flow
 - combines live feedback, reflection, and follow-up learning in one system
 - supports low-bandwidth and offline-friendly practice patterns
-- keeps the public demo controlled through seeded accounts and live-session limits
+- supports self-service accounts while keeping seeded demo accounts for controlled judging
 
 ## Stack
 
@@ -86,6 +86,7 @@ If you are preparing deployment:
 ## Documentation
 
 - [docs/README.md](docs/README.md): documentation hub
+- [docs/project-index.md](docs/project-index.md): deep codebase map, architecture, and file ownership guide
 - [docs/how-to-run.md](docs/how-to-run.md): fastest local run path
 - [docs/cloud-keys.md](docs/cloud-keys.md): exact Anthropic and OpenAI key setup steps
 - [docs/local-setup.md](docs/local-setup.md): full local development guide
@@ -109,6 +110,7 @@ pytest
 
 ## Public Demo Notes
 
-The public demo uses fixed student accounts with limited live-session access so
-judging stays stable and usage stays controlled. The detailed local login flow,
-demo behavior, and setup notes live in [docs/how-to-run.md](docs/how-to-run.md).
+The public demo still includes fixed student accounts with limited live-session
+access so judging stays stable and usage stays controlled, but self-service
+accounts are also enabled. The detailed login flow, demo behavior, and setup
+notes live in [docs/how-to-run.md](docs/how-to-run.md).

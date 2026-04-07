@@ -137,8 +137,104 @@ def test_fixed_developer_account_is_seeded_and_reserved(tmp_path, monkeypatch) -
         },
     )
 
-    assert create_response.status_code == 403
-    assert "disabled" in create_response.json()["detail"].lower()
+    assert create_response.status_code == 409
+    assert "already registered" in create_response.json()["detail"].lower()
+
+
+def test_self_service_student_account_can_be_created_and_signed_in(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    monkeypatch.setattr(auth_service, "AUTH_DB_PATH", tmp_path / "auth.db")
+
+    create_response = client.post(
+        "/api/v1/auth/accounts",
+        json={
+            "name": "Student Prime",
+            "username": "student.prime",
+            "password": "supersecure",
+            "role": "student",
+        },
+    )
+
+    assert create_response.status_code == 201
+    created = create_response.json()
+    assert created["username"] == "student.prime"
+    assert created["role"] == "student"
+    assert created["is_seeded"] is False
+    assert created["session_token"]
+    assert created["live_session_limit"] == 10
+    assert created["live_session_remaining"] == 10
+
+    preview_response = client.get(
+        "/api/v1/auth/accounts/preview",
+        params={"identifier": "student.prime"},
+    )
+    assert preview_response.status_code == 200
+    assert preview_response.json()["username"] == "student.prime"
+
+    sign_in_response = client.post(
+        "/api/v1/auth/sign-in",
+        json={
+            "identifier": "student.prime",
+            "password": "supersecure",
+            "role": "student",
+        },
+    )
+
+    assert sign_in_response.status_code == 200
+    signed_in = sign_in_response.json()
+    assert signed_in["username"] == "student.prime"
+    assert signed_in["session_token"]
+
+
+def test_self_service_admin_request_starts_pending_and_student_scoped(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    monkeypatch.setattr(auth_service, "AUTH_DB_PATH", tmp_path / "auth.db")
+
+    create_response = client.post(
+        "/api/v1/auth/accounts",
+        json={
+            "name": "Faculty Reviewer",
+            "username": "faculty.reviewer",
+            "password": "supersecure",
+            "role": "admin",
+        },
+    )
+
+    assert create_response.status_code == 201
+    created = create_response.json()
+    assert created["username"] == "faculty.reviewer"
+    assert created["role"] == "student"
+    assert created["requested_role"] == "admin"
+    assert created["admin_approval_status"] == "pending"
+
+    admin_sign_in_response = client.post(
+        "/api/v1/auth/sign-in",
+        json={
+            "identifier": "faculty.reviewer",
+            "password": "supersecure",
+            "role": "admin",
+        },
+    )
+
+    assert admin_sign_in_response.status_code == 409
+    assert "pending" in admin_sign_in_response.json()["detail"].lower()
+
+    student_sign_in_response = client.post(
+        "/api/v1/auth/sign-in",
+        json={
+            "identifier": "faculty.reviewer",
+            "password": "supersecure",
+            "role": "student",
+        },
+    )
+
+    assert student_sign_in_response.status_code == 200
+    assert student_sign_in_response.json()["requested_role"] == "admin"
+    assert student_sign_in_response.json()["admin_approval_status"] == "pending"
 
 
 def test_internal_admin_account_is_seeded_and_can_sign_in(tmp_path, monkeypatch) -> None:
@@ -240,7 +336,7 @@ def test_unknown_demo_username_returns_not_found(tmp_path, monkeypatch) -> None:
     )
 
     assert preview_response.status_code == 404
-    assert "contact the developers" in preview_response.json()["detail"].lower()
+    assert "no workspace account" in preview_response.json()["detail"].lower()
 
 
 def test_auth_sign_in_upgrades_legacy_sha256_hash(tmp_path, monkeypatch) -> None:

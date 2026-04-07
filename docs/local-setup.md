@@ -85,9 +85,15 @@ npm run dev
 
 ## Account Model
 
-The current public demo does not allow open signup.
+The current build supports normal self-service account creation from `/login`.
 
-Public seeded student accounts:
+Default account behavior:
+
+- new student accounts can sign up directly from `/login`
+- new admin reviewer accounts are created as student accounts first and marked with a pending admin access request
+- the fixed developer account can approve or reject those admin requests
+
+Seeded public student accounts still exist for judging and smoke testing:
 
 - `Student_1@gmail.com`
 - `Student_2@gmail.com`
@@ -99,8 +105,7 @@ Public demo rules:
 
 - each student account has `10` live sessions
 - consuming a live session happens when a camera run starts
-- only admin or developer accounts can reset the limit
-- unknown usernames are redirected to `/access-required`
+- only admin or developer accounts can reset seeded-account limits
 
 Private internal admin and developer accounts can be seeded through
 `PRIVATE_SEED_ACCOUNTS_JSON`, but those credentials should never be copied into
@@ -129,7 +134,7 @@ That means:
 
 - changing browsers still preserves session history and Knowledge Lab progress if the same account signs in against the same persistent backend
 - clearing browser storage removes the local cache, but synced learning state can rehydrate from the backend
-- deleting `backend/app/data/auth.db` resets seeded-account quota state
+- deleting `backend/app/data/auth.db` resets self-service accounts, seeded-account quota state, and approval/session-token state
 - deleting `backend/app/data/learning_state.db` resets synced session history and Knowledge Lab progress
 - deleting `backend/app/data/review_cases.json` clears persisted review queue state
 - restarting the backend reapplies the latest seeded-account definitions from code and environment
@@ -145,7 +150,7 @@ That means:
 - `/profile`
 - `/admin/reviews`
 - `/developer/approvals`
-- `/access-required`
+- `/access-required` legacy fallback route for older links
 
 ## Live Trainer Behavior
 
@@ -193,8 +198,10 @@ curl http://localhost:8001/api/v1/procedures/simple-interrupted-suture
 
 ## Troubleshooting
 
-- Login page still shows old seeded-account behavior:
-  restart the backend so the seeded-account sync runs again.
+- Login or account behavior still looks stale:
+  restart both frontend and backend so the latest auth flow and seeded-account sync load together.
+- A newly created admin reviewer account cannot enter `/admin/reviews` yet:
+  that account is still pending developer approval and should use the student workspace until approval lands.
 - Live preview fails immediately with an Anthropic credential error:
   `AI_API_KEY` is missing, placeholder-only, revoked, or wrong.
 - Live preview fails immediately with an OpenAI-compatible provider error:

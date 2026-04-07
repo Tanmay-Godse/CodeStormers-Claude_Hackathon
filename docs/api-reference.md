@@ -19,7 +19,8 @@ directly.
 ## Conventions
 
 - request and response bodies are JSON unless noted otherwise
-- auth uses username-only lookup in the public demo
+- auth currently uses username lookup
+- self-service and seeded accounts share the same backend auth store
 - seeded demo accounts return quota fields such as `live_session_limit` and `live_session_remaining`
 - the frontend currently sends fixed defaults for simulation confirmation, audio coaching, and offline logging
 - the frontend keeps a browser cache, but the backend is now the source of truth for synced session history and Knowledge Lab progress
@@ -46,7 +47,7 @@ Returns the procedure metadata that drives the trainer and library.
 
 ### `GET /auth/accounts/preview`
 
-Looks up a seeded demo account by username.
+Looks up an existing account by username.
 
 Query params:
 
@@ -55,7 +56,7 @@ Query params:
 Example:
 
 ```bash
-curl "http://localhost:8001/api/v1/auth/accounts/preview?identifier=Student_1@gmail.com"
+curl "http://localhost:8001/api/v1/auth/accounts/preview?identifier=student.prime"
 ```
 
 Response fields include:
@@ -71,14 +72,13 @@ Response fields include:
 - `live_session_remaining`
 - `session_token` which is `null` before sign-in
 
-Current demo behavior:
+Behavior:
 
 - unknown usernames return `404`
-- the frontend redirects those users to `/access-required`
 
 ### `POST /auth/sign-in`
 
-Signs in a seeded or private managed account.
+Signs in any existing account.
 
 Example request:
 
@@ -94,21 +94,30 @@ Success returns the same account preview shape plus a non-null `session_token`.
 
 ### `POST /auth/accounts`
 
-Still exists, but public self-service account creation is disabled in this demo.
+Creates a new self-service account.
 
-Current behavior:
+Student-account behavior:
 
-- returns `403`
-- message tells the user to contact developers for a fixed demo email
+- creates the account immediately
+- returns `201`
+- includes a non-null `session_token`
+- applies the app's default live-session limit
+
+Admin-request behavior:
+
+- if the request body uses `"role": "admin"`, the account is created as a student account first
+- the response sets `requested_role` to `admin`
+- the response sets `admin_approval_status` to `pending`
+- the fixed developer account can later approve or reject that request
 
 ### `PUT /auth/accounts/{account_id}`
 
-Profile update route for non-seeded private accounts only.
+Profile update route for non-seeded self-service accounts.
 
-In the public demo:
+In this build:
 
 - seeded student accounts are read-only
-- private internal admin and developer accounts are managed out of band
+- developer-managed seeded accounts are still managed out of band
 
 ### `GET /auth/demo-accounts`
 
@@ -160,8 +169,8 @@ Access:
 ### `POST /auth/admin-requests/{account_id}/approve`
 ### `POST /auth/admin-requests/{account_id}/reject`
 
-These routes are developer-only approval controls. They are mainly for the
-internal approval workflow, not for judge-facing demo use.
+These routes are developer-only approval controls for pending admin reviewer
+requests.
 
 ## Learning State
 
