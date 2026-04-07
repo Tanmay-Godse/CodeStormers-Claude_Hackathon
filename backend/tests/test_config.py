@@ -42,3 +42,15 @@ def test_settings_prefers_real_backend_env_transcription_key_over_shell_env(
     settings = config.Settings(_env_file=None)
 
     assert settings.transcription_api_key == "sk-proj-local-transcription-key"
+
+
+def test_settings_ignore_extra_backend_env_keys(monkeypatch) -> None:
+    monkeypatch.setattr(
+        config,
+        "_load_local_dotenv",
+        lambda: {"PRIVATE_SEED_ACCOUNTS_JSON": '[{"id":"x"}]'},
+    )
+
+    settings = config.Settings(_env_file=None)
+
+    assert settings.frontend_origin == "http://localhost:3000"

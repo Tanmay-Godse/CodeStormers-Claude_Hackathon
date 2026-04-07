@@ -6,6 +6,9 @@ import sqlite3
 from datetime import datetime, timezone
 from uuid import uuid4
 
+from dotenv import dotenv_values
+
+from app.core.config import BACKEND_ENV_FILE
 from app.core.storage_paths import runtime_data_path
 from app.schemas.auth import (
     AuthAccountPreview,
@@ -795,7 +798,7 @@ def _configured_seed_usernames() -> set[str]:
 
 
 def _load_private_seeded_accounts() -> tuple[dict[str, object], ...]:
-    raw = os.getenv("PRIVATE_SEED_ACCOUNTS_JSON", "").strip()
+    raw = _read_local_env_value("PRIVATE_SEED_ACCOUNTS_JSON")
     if not raw:
         return ()
 
@@ -891,6 +894,22 @@ def _load_private_seeded_accounts() -> tuple[dict[str, object], ...]:
         seen_usernames.add(username)
 
     return tuple(normalized_accounts)
+
+
+def _read_local_env_value(name: str) -> str:
+    runtime_value = os.getenv(name)
+    if isinstance(runtime_value, str) and runtime_value.strip():
+        return runtime_value.strip()
+
+    if not BACKEND_ENV_FILE.exists():
+        return ""
+
+    local_env = dotenv_values(BACKEND_ENV_FILE)
+    local_value = local_env.get(name)
+    if isinstance(local_value, str):
+        return local_value.strip()
+
+    return ""
 
 
 def _remove_legacy_private_seeded_accounts(

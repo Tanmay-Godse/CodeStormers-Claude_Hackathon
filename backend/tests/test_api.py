@@ -60,6 +60,27 @@ def configure_private_seed_accounts(monkeypatch) -> None:
     monkeypatch.setenv("PRIVATE_SEED_ACCOUNTS_JSON", PRIVATE_SEED_ACCOUNTS)
 
 
+def test_private_seed_accounts_can_load_from_backend_env_file(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    env_path = tmp_path / ".env"
+    env_path.write_text(
+        'PRIVATE_SEED_ACCOUNTS_JSON=[{"id":"account-local-dev","name":"Local Dev","username":"local.dev@example.com","password":"LocalDev@2026","role":"admin","is_developer":true,"live_session_limit":null}]',
+        encoding="utf-8",
+    )
+
+    monkeypatch.delenv("PRIVATE_SEED_ACCOUNTS_JSON", raising=False)
+    monkeypatch.setattr(auth_service, "BACKEND_ENV_FILE", env_path)
+
+    accounts = auth_service._load_private_seeded_accounts()
+
+    assert len(accounts) == 1
+    assert accounts[0]["username"] == "local.dev@example.com"
+    assert accounts[0]["is_developer"] is True
+    assert accounts[0]["live_session_limit"] is None
+
+
 def test_health_route() -> None:
     response = client.get("/api/v1/health")
 
