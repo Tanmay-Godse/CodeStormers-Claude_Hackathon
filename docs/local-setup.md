@@ -15,7 +15,8 @@ current demo build.
 - `frontend`: Next.js app with dashboard, trainer, review, knowledge, library, profile, admin, and developer flows
 - `backend`: FastAPI app with auth, AI routing, safety gate, review queue, and TTS
 - `main AI model`: Anthropic by default, with OpenAI-compatible main-provider support
-- `transcription`: OpenAI `gpt-4o-mini-transcribe`
+- `speech input`: browser STT first in the trainer, with OpenAI `gpt-4o-mini-transcribe` backend transcription available for diagnostics and fallback
+- `speech output`: browser speech first, with backend TTS fallback
 - `auth persistence`: SQLite at `backend/app/data/auth.db`
 - `learning-state persistence`: SQLite at `backend/app/data/learning_state.db`
 - `review queue persistence`: `backend/app/data/review_cases.json`
@@ -32,11 +33,13 @@ current demo build.
 
 ```bash
 cd backend
-python -m venv .venv
-source .venv/bin/activate
-pip install -r requirements.txt
+micromamba run -n hackathon pip install -r requirements.txt
 cp .env.example .env
 ```
+
+If your shell already has `micromamba activate hackathon`, the same commands
+work without the prefix. The docs keep `micromamba run -n hackathon` so the
+backend environment stays explicit.
 
 The recommended defaults already live in `backend/.env.example`. After copying
 it, make sure these values are correct for your machine:
@@ -60,7 +63,7 @@ old shell-exported values. If you update a key, restart the backend.
 Run it:
 
 ```bash
-uvicorn app.main:app --reload --port 8001
+micromamba run -n hackathon uvicorn app.main:app --reload --reload-dir app --port 8001
 ```
 
 ## Frontend Setup
@@ -95,17 +98,19 @@ Default account behavior:
 
 Seeded public student accounts still exist for judging and smoke testing:
 
-- `Student_1@gmail.com`
-- `Student_2@gmail.com`
-- `Student_3@gmail.com`
-- `Student_4@gmail.com`
-- shared password: `CODESTORMERS`
+- `student_1@gmail.com`
+- `student_2@gmail.com`
+- `student_3@gmail.com`
+- `student_4@gmail.com`
+- shared password: `Qwerty@123`
 
 Public demo rules:
 
 - each student account has `10` live sessions
 - consuming a live session happens when a camera run starts
 - only admin or developer accounts can reset seeded-account limits
+- usernames are normalized to lowercase and trimmed before create/sign-in, so
+  duplicates are rejected even if the casing or spaces differ
 
 Private internal admin and developer accounts can be seeded through
 `PRIVATE_SEED_ACCOUNTS_JSON`, but those credentials should never be copied into
@@ -158,9 +163,33 @@ Current demo constraints:
 
 - one core procedure: `simple-interrupted-suture`
 - each camera run is limited to `2 minutes`
-- setup analysis can auto-run after the camera starts
-- live analysis continues during the active run
 - setup accepts clearly visible simulated surfaces such as an orange, banana, or foam pad
+- student accounts default to `10` live sessions unless a different limit is seeded
+
+Setup and audio flow:
+
+- `Setup` tab runs a preflight for backend/API reachability, AI readiness,
+  secure context, camera and mic permissions, browser STT availability, backend
+  transcription readiness, network state, and live-session quota state
+- `Check Audio` is audio-only and does not send a camera frame or consume
+  image-analysis calls
+- `Check Audio` tries Browser STT first and, when backend transcription is
+  ready, also captures one backend comparison sample so both result cards can be
+  shown together
+- browser speech playback is attempted first for coach audio, with backend TTS
+  fallback if browser playback does not start
+
+Session behavior and controls:
+
+- starting the camera consumes one live-session allowance
+- setup does not auto-pass when the camera starts; `Check My Step` remains the
+  frame-analysis action
+- on the setup stage, `Check My Step` can bootstrap capture if the camera is
+  not already live
+- `Pause Session` stops live capture while preserving the current run state and
+  remaining time
+- `End Session` closes the current run cleanly
+- the coach loop becomes active after setup is confirmed
 
 Fixed defaults in the demo build:
 
@@ -175,6 +204,7 @@ Still configurable:
 - `Practice surface`
 - `Learner focus`
 - `Low-bandwidth capture`
+- `Coach voice` (`Guide voice (US male)`, `Guide voice (US)`, `Mentor voice (US)`, `System default (US)`)
 
 ## Verification
 
@@ -185,8 +215,7 @@ npm run typecheck
 npm run build
 
 cd ../backend
-source .venv/bin/activate
-pytest
+micromamba run -n hackathon pytest
 ```
 
 Useful smoke checks:
@@ -202,6 +231,9 @@ curl http://localhost:8001/api/v1/procedures/simple-interrupted-suture
   restart both frontend and backend so the latest auth flow and seeded-account sync load together.
 - A newly created admin reviewer account cannot enter `/admin/reviews` yet:
   that account is still pending developer approval and should use the student workspace until approval lands.
+- Browser STT works inconsistently across browsers:
+  use the trainer `Setup` tab and the dedicated `Mic and speech test` area to
+  confirm whether browser speech recognition is usable in the current browser.
 - Live preview fails immediately with an Anthropic credential error:
   `AI_API_KEY` is missing, placeholder-only, revoked, or wrong.
 - Live preview fails immediately with an OpenAI-compatible provider error:
@@ -209,9 +241,14 @@ curl http://localhost:8001/api/v1/procedures/simple-interrupted-suture
 - Frontend is deployed on a different origin:
   update `FRONTEND_ORIGIN` in the backend and restart it.
 - Learner voice is not transcribed:
-  verify both browser microphone permission and `TRANSCRIPTION_API_KEY`.
+  verify browser microphone permission, Browser STT availability, and
+  `TRANSCRIPTION_API_KEY`. The setup diagnostics now show which path is active.
 - Review page cannot find a session:
   verify the backend is using persistent storage and the same signed-in account; the browser cache can be rebuilt from backend SQLite, but ephemeral backend storage will lose synced session history.
+- Uvicorn reload hits a watchfiles permission error:
+  start the backend from `backend/` with
+  `micromamba run -n hackathon uvicorn app.main:app --reload --reload-dir app --port 8001`
+  so reload only watches `app/`.
 
 ## Related Docs
 

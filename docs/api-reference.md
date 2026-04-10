@@ -20,10 +20,12 @@ directly.
 
 - request and response bodies are JSON unless noted otherwise
 - auth currently uses username lookup
+- usernames are normalized to lowercase and trimmed before create/sign-in
 - self-service and seeded accounts share the same backend auth store
 - seeded demo accounts return quota fields such as `live_session_limit` and `live_session_remaining`
 - the frontend currently sends fixed defaults for simulation confirmation, audio coaching, and offline logging
 - the frontend keeps a browser cache, but the backend is now the source of truth for synced session history and Knowledge Lab progress
+- the trainer `Setup` tab uses `/health` and `/transcription/test` to preflight speech and backend readiness
 
 ## Health And Procedure
 
@@ -32,8 +34,27 @@ directly.
 Returns:
 
 ```json
-{"status":"ok","simulation_only":true}
+{
+  "status": "ok",
+  "simulation_only": true,
+  "ai_provider": "anthropic",
+  "ai_ready": true,
+  "ai_coach_model": "claude-sonnet-4-6",
+  "transcription_ready": true,
+  "transcription_model": "gpt-4o-mini-transcribe",
+  "transcription_api_base_url": "https://api.openai.com/v1"
+}
 ```
+
+Important fields:
+
+- `ai_ready`: whether the main AI provider is configured with a real key
+- `transcription_ready`: whether the backend transcription path is configured
+- `transcription_model`
+- `transcription_api_base_url`
+
+The live trainer `Setup` tab uses this route to decide whether backend
+comparison and fallback paths should be offered.
 
 ### `GET /procedures/{id}`
 
@@ -84,8 +105,8 @@ Example request:
 
 ```json
 {
-  "identifier": "Student_1@gmail.com",
-  "password": "CODESTORMERS",
+  "identifier": "student_1@gmail.com",
+  "password": "Qwerty@123",
   "role": "student"
 }
 ```
@@ -102,6 +123,7 @@ Student-account behavior:
 - returns `201`
 - includes a non-null `session_token`
 - applies the app's default live-session limit
+- rejects usernames that already exist, even when the only difference is casing or leading/trailing whitespace
 
 Admin-request behavior:
 
@@ -347,6 +369,37 @@ The response includes:
 - `learner_goal_summary`
 - `learner_transcript`
 
+### `POST /transcription/test`
+
+Runs the backend transcription path against one short uploaded audio clip.
+
+Typical request:
+
+```json
+{
+  "audio_base64": "UklGRi4uLg==",
+  "audio_format": "wav"
+}
+```
+
+Typical response:
+
+```json
+{
+  "transcript": "Hi, can you hear me?",
+  "latency_ms": 1324,
+  "transcription_model": "gpt-4o-mini-transcribe",
+  "transcription_api_base_url": "https://api.openai.com/v1",
+  "transcription_provider": "OpenAI API"
+}
+```
+
+Notes:
+
+- the trainer `Setup` tab and `Check Audio` use this route for backend speech diagnostics
+- `latency_ms` measures backend request/provider latency, not local microphone recording time
+- the route returns `503` for missing transcription configuration and `502` for provider/request failures
+
 ### `POST /tts`
 
 Generates coach speech audio.
@@ -357,12 +410,22 @@ Example:
 {
   "text": "Keep the needle entry slightly more upright.",
   "feedback_language": "en",
-  "coach_voice": "guide_female"
+  "coach_voice": "guide_male"
 }
 ```
 
 Returns audio bytes with the active content type, usually `audio/mpeg` when
 neural TTS succeeds.
+
+Accepted `coach_voice` values:
+
+- `guide_male`
+- `guide_female`
+- `mentor_female`
+- `system_default`
+
+The frontend usually prefers browser speech playback first and only calls this
+route when backend speech fallback is needed.
 
 ## Review
 

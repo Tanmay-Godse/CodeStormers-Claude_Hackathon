@@ -68,8 +68,12 @@ If you use micromamba, activate it before launching the backend:
 ```bash
 micromamba activate hackathon
 cd backend
-uvicorn app.main:app --reload --port 8001
+micromamba run -n hackathon uvicorn app.main:app --reload --reload-dir app --port 8001
 ```
+
+If you already activated `hackathon` in your shell, the same Uvicorn command
+works without the `micromamba run -n hackathon` prefix. The docs keep the
+prefix so setup stays explicit and consistent.
 
 ## Option A: Anthropic Main AI Plus OpenAI Transcription
 
@@ -97,7 +101,7 @@ TRANSCRIPTION_MODEL=gpt-4o-mini-transcribe
 
 ```bash
 cd backend
-uvicorn app.main:app --reload --port 8001
+micromamba run -n hackathon uvicorn app.main:app --reload --reload-dir app --port 8001
 ```
 
 Use this option if you want to keep the current demo behavior unchanged.
@@ -129,7 +133,7 @@ TRANSCRIPTION_MODEL=gpt-4o-mini-transcribe
 
 ```bash
 cd backend
-uvicorn app.main:app --reload --port 8001
+micromamba run -n hackathon uvicorn app.main:app --reload --reload-dir app --port 8001
 ```
 
 If your team standardizes on a different OpenAI model per feature, replace the
@@ -144,7 +148,7 @@ your terminal before launching the backend:
 export AI_API_KEY='YOUR_REAL_MAIN_PROVIDER_KEY'
 export TRANSCRIPTION_API_KEY='YOUR_REAL_OPENAI_KEY'
 cd backend
-uvicorn app.main:app --reload --port 8001
+micromamba run -n hackathon uvicorn app.main:app --reload --reload-dir app --port 8001
 ```
 
 For most local setups, editing `backend/.env` is simpler than exporting

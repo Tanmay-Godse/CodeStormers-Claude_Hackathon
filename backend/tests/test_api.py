@@ -10,7 +10,9 @@ from app.api.routes import coach as coach_route
 from app.api.routes import debrief as debrief_route
 from app.api.routes import knowledge as knowledge_route
 from app.api.routes import review_cases as review_cases_route
+from app.api.routes import transcription as transcription_route
 from app.api.routes import tts as tts_route
+from app.core.config import settings
 from app.main import app
 from app.schemas.analyze import AnalyzeFrameResponse, Issue, SafetyGateResult
 from app.schemas.coach import CoachChatResponse
@@ -60,11 +62,43 @@ def configure_private_seed_accounts(monkeypatch) -> None:
     monkeypatch.setenv("PRIVATE_SEED_ACCOUNTS_JSON", PRIVATE_SEED_ACCOUNTS)
 
 
+def test_private_seed_accounts_can_load_from_backend_env_file(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    env_path = tmp_path / ".env"
+    env_path.write_text(
+        'PRIVATE_SEED_ACCOUNTS_JSON=[{"id":"account-local-dev","name":"Local Dev","username":"local.dev@example.com","password":"LocalDev@2026","role":"admin","is_developer":true,"live_session_limit":null}]',
+        encoding="utf-8",
+    )
+
+    monkeypatch.delenv("PRIVATE_SEED_ACCOUNTS_JSON", raising=False)
+    monkeypatch.setattr(auth_service, "BACKEND_ENV_FILE", env_path)
+
+    accounts = auth_service._load_private_seeded_accounts()
+
+    assert len(accounts) == 1
+    assert accounts[0]["username"] == "local.dev@example.com"
+    assert accounts[0]["is_developer"] is True
+    assert accounts[0]["live_session_limit"] is None
+
+
 def test_health_route() -> None:
     response = client.get("/api/v1/health")
 
     assert response.status_code == 200
-    assert response.json() == {"status": "ok", "simulation_only": True}
+    payload = response.json()
+    assert payload["status"] == "ok"
+    assert payload["simulation_only"] is True
+    assert payload["ai_provider"] == settings.ai_provider
+    assert payload["ai_ready"] is True
+    assert payload["ai_coach_model"] == settings.ai_coach_model
+    assert payload["transcription_ready"] is True
+    assert payload["transcription_model"] == settings.transcription_model
+    assert (
+        payload["transcription_api_base_url"]
+        == settings.transcription_api_base_url
+    )
 
 
 def test_demo_student_account_preview_and_sign_in(tmp_path, monkeypatch) -> None:
@@ -87,7 +121,7 @@ def test_demo_student_account_preview_and_sign_in(tmp_path, monkeypatch) -> None
         "/api/v1/auth/sign-in",
         json={
             "identifier": "Student_1@gmail.com",
-            "password": "CODESTORMERS",
+            "password": "Qwerty@123",
             "role": "student",
         },
     )
@@ -188,6 +222,42 @@ def test_self_service_student_account_can_be_created_and_signed_in(
     assert signed_in["session_token"]
 
 
+def test_self_service_account_creation_rejects_duplicate_username_variants(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    monkeypatch.setattr(auth_service, "AUTH_DB_PATH", tmp_path / "auth.db")
+
+    first_create_response = client.post(
+        "/api/v1/auth/accounts",
+        json={
+            "name": "Student Prime",
+            "username": "Student.Prime",
+            "password": "supersecure",
+            "role": "student",
+        },
+    )
+
+    assert first_create_response.status_code == 201
+    assert first_create_response.json()["username"] == "student.prime"
+
+    duplicate_create_response = client.post(
+        "/api/v1/auth/accounts",
+        json={
+            "name": "Student Prime Two",
+            "username": "  student.prime  ",
+            "password": "supersecure",
+            "role": "student",
+        },
+    )
+
+    assert duplicate_create_response.status_code == 409
+    assert (
+        duplicate_create_response.json()["detail"]
+        == "That username is already registered. Sign in instead."
+    )
+
+
 def test_self_service_admin_request_starts_pending_and_student_scoped(
     tmp_path,
     monkeypatch,
@@ -273,7 +343,7 @@ def test_live_session_limit_can_be_consumed_and_reset_by_admin(tmp_path, monkeyp
         "/api/v1/auth/sign-in",
         json={
             "identifier": "student_1@gmail.com",
-            "password": "CODESTORMERS",
+            "password": "Qwerty@123",
             "role": "student",
         },
     )
@@ -499,7 +569,7 @@ def test_learning_state_round_trip_persists_sessions_and_progress(
         "/api/v1/auth/sign-in",
         json={
             "identifier": "Student_1@gmail.com",
-            "password": "CODESTORMERS",
+            "password": "Qwerty@123",
             "role": "student",
         },
     )
@@ -599,7 +669,7 @@ def test_learning_state_rejects_cross_account_session_id_takeover(
         "/api/v1/auth/sign-in",
         json={
             "identifier": "Student_1@gmail.com",
-            "password": "CODESTORMERS",
+            "password": "Qwerty@123",
             "role": "student",
         },
     )
@@ -610,7 +680,7 @@ def test_learning_state_rejects_cross_account_session_id_takeover(
         "/api/v1/auth/sign-in",
         json={
             "identifier": "Student_2@gmail.com",
-            "password": "CODESTORMERS",
+            "password": "Qwerty@123",
             "role": "student",
         },
     )
@@ -701,7 +771,7 @@ def test_learning_state_make_active_must_be_explicit(
         "/api/v1/auth/sign-in",
         json={
             "identifier": "Student_1@gmail.com",
-            "password": "CODESTORMERS",
+            "password": "Qwerty@123",
             "role": "student",
         },
     )
@@ -803,7 +873,7 @@ def test_learning_state_snapshot_normalizes_stale_stored_username(
         "/api/v1/auth/sign-in",
         json={
             "identifier": "Student_1@gmail.com",
-            "password": "CODESTORMERS",
+            "password": "Qwerty@123",
             "role": "student",
         },
     )
@@ -1207,13 +1277,41 @@ def test_tts_route_returns_audio_payload(monkeypatch) -> None:
         json={
             "text": "Coach voice check.",
             "feedback_language": "en",
-            "coach_voice": "guide_female",
+            "coach_voice": "guide_male",
         },
     )
 
     assert response.status_code == 200
     assert response.headers["content-type"].startswith("audio/mpeg")
     assert response.content == b"fake-mp3"
+
+
+def test_transcription_test_route_returns_transcript_and_latency(monkeypatch) -> None:
+    monkeypatch.setattr(
+        transcription_route.transcription_service,
+        "transcribe_audio_clip",
+        lambda **_kwargs: "Needle entry looks centered.",
+    )
+
+    response = client.post(
+        "/api/v1/transcription/test",
+        json={
+            "audio_base64": "ZmFrZS13YXY=",
+            "audio_format": "wav",
+        },
+    )
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["transcript"] == "Needle entry looks centered."
+    assert isinstance(payload["latency_ms"], int)
+    assert payload["latency_ms"] >= 0
+    assert payload["transcription_model"] == settings.transcription_model
+    assert (
+        payload["transcription_api_base_url"]
+        == settings.transcription_api_base_url
+    )
+    assert payload["transcription_provider"]
 
 
 def test_analyze_route_returns_503_for_missing_ai_configuration(monkeypatch) -> None:

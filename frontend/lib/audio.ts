@@ -4,6 +4,39 @@ import type { CoachVoicePreset, FeedbackLanguage } from "@/lib/types";
 
 type BrowserAudioContextConstructor = typeof AudioContext;
 type BrowserSpeechVoice = SpeechSynthesisVoice;
+type BrowserSpeechRecognitionAlternative = {
+  transcript: string;
+  confidence?: number;
+};
+type BrowserSpeechRecognitionResultList = {
+  isFinal: boolean;
+  length: number;
+  [index: number]: BrowserSpeechRecognitionAlternative;
+};
+type BrowserSpeechRecognitionEvent = Event & {
+  resultIndex: number;
+  results: {
+    length: number;
+    [index: number]: BrowserSpeechRecognitionResultList;
+  };
+};
+type BrowserSpeechRecognitionErrorEvent = Event & {
+  error: string;
+  message?: string;
+};
+type BrowserSpeechRecognition = EventTarget & {
+  continuous: boolean;
+  interimResults: boolean;
+  lang: string;
+  maxAlternatives: number;
+  onend: ((event: Event) => void) | null;
+  onerror: ((event: BrowserSpeechRecognitionErrorEvent) => void) | null;
+  onresult: ((event: BrowserSpeechRecognitionEvent) => void) | null;
+  start: () => void;
+  stop: () => void;
+  abort: () => void;
+};
+type BrowserSpeechRecognitionConstructor = new () => BrowserSpeechRecognition;
 
 const MALE_VOICE_HINTS = [
   "male",
@@ -114,19 +147,24 @@ export const COACH_VOICE_OPTIONS: Array<{
   description: string;
 }> = [
   {
+    value: "guide_male",
+    label: "Guide voice (US male)",
+    description: "Clear, steady American-English male coach voice for live step guidance.",
+  },
+  {
     value: "guide_female",
-    label: "Guide voice",
-    description: "Clear, steady US-English female coach voice for live step guidance.",
+    label: "Guide voice (US)",
+    description: "Clear, steady American-English coach voice for live step guidance.",
   },
   {
     value: "mentor_female",
-    label: "Mentor voice",
-    description: "Warmer, slightly slower US-English female coach voice for question support.",
+    label: "Mentor voice (US)",
+    description: "Warmer, slightly slower American-English coach voice for question support.",
   },
   {
     value: "system_default",
-    label: "System default",
-    description: "Use the browser default voice for the selected language.",
+    label: "System default (US)",
+    description: "Use the browser default American-English voice when it is available.",
   },
 ];
 
@@ -134,15 +172,38 @@ const VOICE_PRESET_CONFIG: Record<
   CoachVoicePreset,
   {
     preferBrowserFirst: boolean;
-    preferredGender: "female" | "neutral";
+    preferredGender: "female" | "male" | "neutral";
     pitch: number;
     rate: number;
+    accentBias?: "us" | "non_us";
     preferredHints: string[];
   }
 > = {
+  guide_male: {
+    preferBrowserFirst: false,
+    preferredGender: "male",
+    accentBias: "us",
+    pitch: 0.92,
+    rate: 0.96,
+    preferredHints: [
+      "andrew",
+      "brian",
+      "christopher",
+      "davis",
+      "david",
+      "eric",
+      "guy",
+      "james",
+      "matthew",
+      "new york",
+      "new york city",
+      "tony",
+    ],
+  },
   guide_female: {
     preferBrowserFirst: true,
     preferredGender: "female",
+    accentBias: "us",
     pitch: 1.14,
     rate: 0.98,
     preferredHints: [
@@ -164,24 +225,31 @@ const VOICE_PRESET_CONFIG: Record<
   mentor_female: {
     preferBrowserFirst: true,
     preferredGender: "female",
+    accentBias: "us",
     pitch: 1.02,
     rate: 0.92,
     preferredHints: [
-      "catherine",
-      "hazel",
-      "karen",
-      "luna",
+      "allison",
+      "aria",
+      "ava",
+      "jenny",
+      "kimberly",
+      "kendra",
       "michelle",
-      "moira",
-      "monica",
+      "new york",
+      "new york city",
+      "michelle",
       "ruth",
       "sara",
+      "samantha",
       "susan",
+      "victoria",
     ],
   },
   system_default: {
     preferBrowserFirst: true,
     preferredGender: "neutral",
+    accentBias: "us",
     pitch: 1,
     rate: 1,
     preferredHints: [],
@@ -201,11 +269,38 @@ export type VoiceRecordingController = {
   cancel: () => Promise<void>;
 };
 
+export type CapturedVoiceTurn = {
+  audioClip: RecordedVoiceClip | null;
+  transcript: string;
+};
+
+export type VoiceCaptureController = {
+  result: Promise<CapturedVoiceTurn | null>;
+  stop: () => Promise<CapturedVoiceTurn | null>;
+  cancel: () => Promise<void>;
+};
+
 export type VoiceRecordingOptions = {
   maxDurationMs?: number;
   minSpeechDurationMs?: number;
   silenceDurationMs?: number;
   silenceThreshold?: number;
+};
+
+type BrowserSpeechRecognitionOptions = {
+  language: FeedbackLanguage;
+  maxDurationMs?: number;
+};
+
+export type BrowserSpeechRecognitionResult = {
+  transcript: string;
+  errorMessage: string | null;
+};
+
+export type BrowserSpeechRecognitionController = {
+  result: Promise<BrowserSpeechRecognitionResult | null>;
+  stop: () => Promise<BrowserSpeechRecognitionResult | null>;
+  cancel: () => Promise<void>;
 };
 
 const DEFAULT_VOICE_RECORDING_MAX_DURATION_MS = 10_000;
@@ -214,10 +309,15 @@ const DEFAULT_VOICE_RECORDING_SILENCE_DURATION_MS = 800;
 const DEFAULT_VOICE_RECORDING_SILENCE_THRESHOLD = 0.012;
 const DEFAULT_VOICE_RECORDING_FALLBACK_RMS = 0.006;
 const DEFAULT_VOICE_RECORDING_MIN_CLIP_DURATION_MS = 650;
+const BROWSER_SPEECH_START_TIMEOUT_MS = 1_600;
+const BROWSER_SPEECH_MIN_COMPLETION_TIMEOUT_MS = 4_000;
+const BROWSER_SPEECH_MAX_COMPLETION_TIMEOUT_MS = 18_000;
 
 let activeAudioElement: HTMLAudioElement | null = null;
 let activeAudioUrl: string | null = null;
 let activeAudioCompletionResolver: ((didFinish: boolean) => void) | null = null;
+let activeSpeechPlaybackResolver: ((didFinish: boolean) => void) | null = null;
+let activeSpeechPlaybackCleanup: (() => void) | null = null;
 
 function getAudioContextConstructor():
   | BrowserAudioContextConstructor
@@ -231,6 +331,25 @@ function getAudioContextConstructor():
   };
 
   return window.AudioContext ?? audioWindow.webkitAudioContext ?? null;
+}
+
+function getSpeechRecognitionConstructor():
+  | BrowserSpeechRecognitionConstructor
+  | null {
+  if (typeof window === "undefined") {
+    return null;
+  }
+
+  const speechWindow = window as Window & {
+    SpeechRecognition?: BrowserSpeechRecognitionConstructor;
+    webkitSpeechRecognition?: BrowserSpeechRecognitionConstructor;
+  };
+
+  return (
+    speechWindow.SpeechRecognition ??
+    speechWindow.webkitSpeechRecognition ??
+    null
+  );
 }
 
 function mergeBuffers(buffers: Float32Array[], totalSamples: number): Float32Array {
@@ -338,6 +457,18 @@ function normalizeMicrophoneError(error: unknown): string {
   return "Voice recording could not start.";
 }
 
+function normalizeSpeechRecognitionError(errorCode: string | null | undefined): string | null {
+  switch ((errorCode ?? "").trim()) {
+    case "not-allowed":
+    case "service-not-allowed":
+      return "Microphone access was blocked. Allow microphone access and try again.";
+    case "audio-capture":
+      return "No microphone was found on this device.";
+    default:
+      return null;
+  }
+}
+
 export function canUseSpeechSynthesis(): boolean {
   return typeof window !== "undefined" && "speechSynthesis" in window;
 }
@@ -347,6 +478,13 @@ export function canUseVoiceRecording(): boolean {
     typeof window !== "undefined" &&
     Boolean(navigator.mediaDevices?.getUserMedia) &&
     getAudioContextConstructor() !== null
+  );
+}
+
+export function canUseBrowserSpeechRecognition(): boolean {
+  return (
+    typeof window !== "undefined" &&
+    getSpeechRecognitionConstructor() !== null
   );
 }
 
@@ -372,11 +510,13 @@ export async function primeVoiceRecordingPermission(): Promise<void> {
 
 export function stopSpeechPlayback() {
   if (!canUseSpeechSynthesis()) {
+    cleanupActiveSpeechPlayback(false);
     cleanupActiveAudioPlayback();
     return;
   }
 
   window.speechSynthesis.cancel();
+  cleanupActiveSpeechPlayback(false);
   cleanupActiveAudioPlayback();
 }
 
@@ -403,8 +543,10 @@ function getPreferredSpeechVoice(
   const requestedPrefix = requestedLanguage.split("-")[0] ?? requestedLanguage;
   const voices = window.speechSynthesis.getVoices();
   const presetConfig = VOICE_PRESET_CONFIG[preset];
-  const prefersUsFemaleEnglish =
-    requestedLanguage === "en-us" && presetConfig.preferredGender === "female";
+  const prefersUsEnglish =
+    requestedLanguage === "en-us" && presetConfig.accentBias !== "non_us";
+  const prefersNonUsEnglish =
+    requestedPrefix === "en" && presetConfig.accentBias === "non_us";
 
   if (voices.length === 0) {
     return null;
@@ -442,34 +584,53 @@ function getPreferredSpeechVoice(
       : 0;
     const usEnglishScore =
       requestedLanguage === "en-us" &&
+      presetConfig.accentBias !== "non_us" &&
       usEnglishMatch
         ? 24
         : 0;
+    const nonUsEnglishScore =
+      prefersNonUsEnglish &&
+      nonUsEnglishMatch
+        ? 28
+        : 0;
     const exactUsLanguageScore =
-      prefersUsFemaleEnglish && isExactRequestedLanguage ? 26 : 0;
-    const femaleScore =
-      presetConfig.preferredGender === "female" &&
-      femaleMatch
+      prefersUsEnglish && isExactRequestedLanguage ? 26 : 0;
+    const genderScore =
+      presetConfig.preferredGender === "female" && femaleMatch
         ? 26
-        : 0;
-    const malePenalty =
-      presetConfig.preferredGender === "female" &&
-      maleMatch
+        : presetConfig.preferredGender === "male" && maleMatch
+          ? 26
+          : 0;
+    const genderMismatchPenalty =
+      presetConfig.preferredGender === "female" && maleMatch
         ? -42
-        : 0;
+        : presetConfig.preferredGender === "male" && femaleMatch
+          ? -30
+          : 0;
     const nonUsEnglishPenalty =
-      prefersUsFemaleEnglish &&
+      prefersUsEnglish &&
       nonUsEnglishMatch
         ? -24
         : 0;
+    const usEnglishPenalty =
+      prefersNonUsEnglish &&
+      usEnglishMatch
+        ? -26
+        : 0;
     const enUsFemalePriorityScore =
-      prefersUsFemaleEnglish && priorityHintIndex >= 0
+      presetConfig.preferredGender === "female" &&
+      prefersUsEnglish &&
+      priorityHintIndex >= 0
         ? 90 - priorityHintIndex
         : 0;
     const noFemaleHintPenalty =
-      prefersUsFemaleEnglish && !femaleMatch ? -22 : 0;
+      presetConfig.preferredGender === "female" &&
+      prefersUsEnglish &&
+      !femaleMatch
+        ? -22
+        : 0;
     const nonUsLanguagePenalty =
-      prefersUsFemaleEnglish &&
+      prefersUsEnglish &&
       voicePrefix === "en" &&
       !isExactRequestedLanguage &&
       !usEnglishMatch
@@ -481,11 +642,13 @@ function getPreferredSpeechVoice(
       languageScore +
       presetHintScore +
       usEnglishScore +
+      nonUsEnglishScore +
       exactUsLanguageScore +
       enUsFemalePriorityScore +
-      femaleScore +
-      malePenalty +
+      genderScore +
+      genderMismatchPenalty +
       nonUsEnglishPenalty +
+      usEnglishPenalty +
       noFemaleHintPenalty +
       nonUsLanguagePenalty +
       localServiceScore +
@@ -516,19 +679,15 @@ function configureUtterance(
 }
 
 function shouldPreferBrowserSpeech(
-  language: FeedbackLanguage,
-  preset: CoachVoicePreset,
+  _language: FeedbackLanguage,
+  _preset: CoachVoicePreset,
 ): boolean {
-  if (!canUseSpeechSynthesis()) {
-    return false;
-  }
+  void _language;
+  void _preset;
 
-  const presetConfig = VOICE_PRESET_CONFIG[preset];
-  if (!presetConfig.preferBrowserFirst) {
-    return false;
-  }
-
-  return true;
+  // Browser-first mode: use native speech synthesis whenever it exists,
+  // then fall back to backend audio only if playback does not start.
+  return canUseSpeechSynthesis();
 }
 
 export function speakText(
@@ -719,6 +878,262 @@ export async function startVoiceRecording(
   };
 }
 
+function startBrowserSpeechRecognition(
+  options: BrowserSpeechRecognitionOptions,
+): BrowserSpeechRecognitionController | null {
+  const SpeechRecognitionConstructor = getSpeechRecognitionConstructor();
+
+  if (!SpeechRecognitionConstructor) {
+    return null;
+  }
+
+  const recognition = new SpeechRecognitionConstructor();
+  const maxDurationMs =
+    options.maxDurationMs ?? DEFAULT_VOICE_RECORDING_MAX_DURATION_MS;
+  let finalTranscript = "";
+  let interimTranscript = "";
+  let resultResolved = false;
+  let discardRequested = false;
+  let errorMessage: string | null = null;
+  let maxDurationTimer: ReturnType<typeof setTimeout> | null = null;
+  let resolveResult: ((result: BrowserSpeechRecognitionResult | null) => void) | null =
+    null;
+
+  const normalizeTranscript = (value: string): string =>
+    value.replace(/\s+/g, " ").trim();
+  const buildTranscript = (): string =>
+    normalizeTranscript([finalTranscript, interimTranscript].filter(Boolean).join(" "));
+  const result = new Promise<BrowserSpeechRecognitionResult | null>((resolve) => {
+    resolveResult = resolve;
+  });
+
+  const clearTimer = () => {
+    if (maxDurationTimer) {
+      clearTimeout(maxDurationTimer);
+      maxDurationTimer = null;
+    }
+  };
+
+  const resolveOnce = (value: BrowserSpeechRecognitionResult | null) => {
+    if (resultResolved) {
+      return;
+    }
+
+    resultResolved = true;
+    clearTimer();
+    recognition.onend = null;
+    recognition.onerror = null;
+    recognition.onresult = null;
+    resolveResult?.(value);
+    resolveResult = null;
+  };
+
+  recognition.continuous = true;
+  recognition.interimResults = true;
+  recognition.lang = getSpeechLanguageCode(options.language);
+  recognition.maxAlternatives = 1;
+
+  recognition.onresult = (event) => {
+    let nextFinalTranscript = "";
+    let nextInterimTranscript = "";
+
+    for (let index = 0; index < event.results.length; index += 1) {
+      const resultList = event.results[index];
+      const transcript = resultList?.[0]?.transcript ?? "";
+      if (!transcript.trim()) {
+        continue;
+      }
+
+      if (resultList.isFinal) {
+        nextFinalTranscript += ` ${transcript}`;
+      } else {
+        nextInterimTranscript += ` ${transcript}`;
+      }
+    }
+
+    finalTranscript = normalizeTranscript(nextFinalTranscript);
+    interimTranscript = normalizeTranscript(nextInterimTranscript);
+  };
+
+  recognition.onerror = (event) => {
+    const normalizedMessage = normalizeSpeechRecognitionError(event.error);
+    if (normalizedMessage) {
+      errorMessage = normalizedMessage;
+      return;
+    }
+
+    if (event.error === "aborted" || event.error === "no-speech") {
+      return;
+    }
+
+    errorMessage = event.message?.trim() || "Browser speech recognition could not continue.";
+  };
+
+  recognition.onend = () => {
+    if (discardRequested) {
+      resolveOnce(null);
+      return;
+    }
+
+    resolveOnce({
+      transcript: buildTranscript(),
+      errorMessage,
+    });
+  };
+
+  maxDurationTimer = setTimeout(() => {
+    try {
+      recognition.stop();
+    } catch {
+      resolveOnce({
+        transcript: buildTranscript(),
+        errorMessage,
+      });
+    }
+  }, maxDurationMs);
+
+  try {
+    recognition.start();
+  } catch (error) {
+    clearTimer();
+    throw new Error(
+      error instanceof Error && error.message.trim()
+        ? error.message.trim()
+        : "Browser speech recognition could not start.",
+    );
+  }
+
+  return {
+    result,
+    stop: async () => {
+      if (resultResolved) {
+        return result;
+      }
+
+      try {
+        recognition.stop();
+      } catch {
+        resolveOnce({
+          transcript: buildTranscript(),
+          errorMessage,
+        });
+      }
+
+      return result;
+    },
+    cancel: async () => {
+      discardRequested = true;
+
+      if (!resultResolved) {
+        try {
+          recognition.abort();
+        } catch {
+          resolveOnce(null);
+        }
+      }
+
+      await result.then(() => undefined);
+    },
+  };
+}
+
+export async function startBrowserSpeechCapture(
+  options: BrowserSpeechRecognitionOptions,
+): Promise<BrowserSpeechRecognitionController | null> {
+  return startBrowserSpeechRecognition(options);
+}
+
+export async function startVoiceCapture(
+  options: VoiceRecordingOptions & {
+    language: FeedbackLanguage;
+  },
+): Promise<VoiceCaptureController | null> {
+  let browserRecognitionController: BrowserSpeechRecognitionController | null = null;
+  let browserRecognitionStartError: Error | null = null;
+
+  try {
+    browserRecognitionController = startBrowserSpeechRecognition({
+      language: options.language,
+      maxDurationMs: options.maxDurationMs,
+    });
+  } catch (error) {
+    browserRecognitionStartError =
+      error instanceof Error
+        ? error
+        : new Error("Browser speech recognition could not start.");
+  }
+
+  if (browserRecognitionController) {
+    return {
+      result: browserRecognitionController.result.then((recognitionResult) => {
+        const transcript = recognitionResult?.transcript.trim() ?? "";
+        if (!transcript) {
+          return null;
+        }
+
+        return {
+          audioClip: null,
+          transcript,
+        };
+      }),
+      stop: async () => {
+        const recognitionResult = await browserRecognitionController.stop();
+        const transcript = recognitionResult?.transcript.trim() ?? "";
+        if (!transcript) {
+          return null;
+        }
+
+        return {
+          audioClip: null,
+          transcript,
+        };
+      },
+      cancel: () => browserRecognitionController.cancel(),
+    };
+  }
+
+  let recordingController: VoiceRecordingController | null = null;
+  let recordingStartError: Error | null = null;
+
+  try {
+    recordingController = await startVoiceRecording(options);
+  } catch (error) {
+    recordingStartError =
+      error instanceof Error
+        ? error
+        : new Error("Voice recording could not start.");
+  }
+
+  if (!recordingController) {
+    throw (
+      recordingStartError ??
+      browserRecognitionStartError ??
+      new Error("This browser does not support voice capture for the coach.")
+    );
+  }
+
+  return {
+    result: recordingController.result.then((audioClip) =>
+      audioClip
+        ? {
+            audioClip,
+            transcript: "",
+          }
+        : null,
+    ),
+    stop: async () => {
+      const audioClip = await recordingController.stop();
+      return audioClip
+        ? {
+            audioClip,
+            transcript: "",
+          }
+        : null;
+    },
+    cancel: () => recordingController.cancel(),
+  };
+}
+
 async function speakTextWithFallback(
   text: string,
   language: FeedbackLanguage,
@@ -843,16 +1258,71 @@ function playBrowserSpeech(
   synth.resume();
 
   return new Promise((resolve) => {
+    let settled = false;
+    let speechStarted = false;
+    let startTimer: number | null = null;
+    let completionTimer: number | null = null;
+
+    const finalize = (didFinish: boolean) => {
+      if (settled) {
+        return;
+      }
+
+      settled = true;
+      cleanup();
+      resolve(didFinish);
+    };
+
+    const cleanup = () => {
+      if (startTimer) {
+        window.clearTimeout(startTimer);
+        startTimer = null;
+      }
+
+      if (completionTimer) {
+        window.clearTimeout(completionTimer);
+        completionTimer = null;
+      }
+
+      synth.removeEventListener?.("voiceschanged", handleVoicesChanged);
+
+      if (activeSpeechPlaybackCleanup === cleanup) {
+        activeSpeechPlaybackCleanup = null;
+      }
+    };
+
+    const completionTimeoutMs = Math.min(
+      BROWSER_SPEECH_MAX_COMPLETION_TIMEOUT_MS,
+      Math.max(
+        BROWSER_SPEECH_MIN_COMPLETION_TIMEOUT_MS,
+        text.trim().split(/\s+/).length * 420,
+      ),
+    );
+
+    startTimer = window.setTimeout(() => {
+      finalize(false);
+    }, BROWSER_SPEECH_START_TIMEOUT_MS);
+
     const speakOnce = () => {
       const utterance = new SpeechSynthesisUtterance(text);
       configureUtterance(utterance, language, preset);
       utterance.onstart = () => {
-        if (!waitForCompletion) {
-          resolve(true);
+        speechStarted = true;
+        if (startTimer) {
+          window.clearTimeout(startTimer);
+          startTimer = null;
         }
+        if (!waitForCompletion) {
+          finalize(true);
+          return;
+        }
+
+        completionTimer = window.setTimeout(() => {
+          finalize(false);
+        }, completionTimeoutMs);
       };
-      utterance.onerror = () => resolve(false);
-      utterance.onend = () => resolve(true);
+      utterance.onerror = () => finalize(false);
+      utterance.onend = () => finalize(true);
       synth.cancel();
       synth.resume();
       synth.speak(utterance);
@@ -866,21 +1336,28 @@ function playBrowserSpeech(
 
     let didSpeak = false;
     const handleVoicesChanged = () => {
-      if (didSpeak) {
+      if (didSpeak || settled) {
         return;
       }
 
       didSpeak = true;
-      synth.removeEventListener?.("voiceschanged", handleVoicesChanged);
       speakOnce();
     };
 
+    activeSpeechPlaybackResolver = finalize;
+    activeSpeechPlaybackCleanup = cleanup;
     synth.addEventListener?.("voiceschanged", handleVoicesChanged);
     window.setTimeout(() => {
       if (!didSpeak) {
         handleVoicesChanged();
       }
     }, 900);
+
+    window.setTimeout(() => {
+      if (!speechStarted && !settled) {
+        finalize(false);
+      }
+    }, BROWSER_SPEECH_START_TIMEOUT_MS + 150);
   });
 }
 
@@ -907,4 +1384,20 @@ function cleanupActiveAudioPlayback() {
     URL.revokeObjectURL(activeAudioUrl);
     activeAudioUrl = null;
   }
+}
+
+function cleanupActiveSpeechPlayback(didFinish: boolean) {
+  const resolver = activeSpeechPlaybackResolver;
+  activeSpeechPlaybackResolver = null;
+  if (activeSpeechPlaybackCleanup) {
+    const cleanup = activeSpeechPlaybackCleanup;
+    activeSpeechPlaybackCleanup = null;
+    cleanup();
+  }
+
+  if (!resolver) {
+    return;
+  }
+
+  resolver(didFinish);
 }

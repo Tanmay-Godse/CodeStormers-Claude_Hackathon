@@ -7,7 +7,7 @@ This package contains the Next.js frontend for Clinical Curator AI.
 - shared app shell and navigation
 - login and legacy access-required flows
 - dashboard and profile surfaces
-- live trainer UI
+- live trainer UI, setup preflight, and audio diagnostics
 - review page and debrief rendering
 - Knowledge Lab
 - library guide
@@ -65,6 +65,7 @@ or OpenAI.
 
 - the backend owns the auth account record, session token, live-session quota, synced session history, and Knowledge Lab progress
 - the browser keeps a local cache for fast hydration plus cached debriefs and offline-friendly logs
+- the trainer can use browser speech first, but it also compares or falls back to backend transcription and backend TTS when needed
 - the production app proxies backend calls through `/api/proxy/*`
 
 ## Read Next

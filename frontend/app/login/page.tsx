@@ -182,9 +182,6 @@ function LoginPageContent() {
 
             <div className="auth-flow-meta">
               <span className="pill">
-                {requestedRole ? `${requestedRole} route` : "adaptive route"}
-              </span>
-              <span className="pill">
                 {requestedRole
                   ? resolveDestination({ isDeveloper: false, role: requestedRole })
                   : "match workspace after sign-in"}

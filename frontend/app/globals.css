@@ -2149,8 +2149,9 @@ img {
   bottom: 24px;
   z-index: 20;
   display: flex;
-  align-items: center;
-  gap: 24px;
+  flex-direction: column;
+  align-items: stretch;
+  gap: 16px;
   width: min(960px, calc(100vw - 600px));
   min-height: 110px;
   padding: 18px 22px;
@@ -2160,6 +2161,18 @@ img {
   box-shadow: 0 24px 54px rgba(40, 97, 158, 0.12);
   backdrop-filter: blur(16px);
   transform: translateX(-38%);
+}
+
+.live-bottom-bar.has-audio-insight {
+  min-height: 168px;
+  border-radius: 40px;
+}
+
+.live-bottom-primary-row {
+  display: flex;
+  align-items: center;
+  gap: 24px;
+  width: 100%;
 }
 
 .live-waveform {
@@ -2191,17 +2204,11 @@ img {
   border-left: 1px solid rgba(100, 122, 146, 0.16);
 }
 
-.live-mic-badge {
-  display: grid;
-  width: 52px;
-  height: 52px;
-  place-items: center;
-  border-radius: 50%;
-  background: rgba(40, 97, 158, 0.1);
-  color: #004983;
-  font-size: 0.72rem;
-  font-weight: 800;
-  letter-spacing: 0.12em;
+.live-status-chip {
+  min-width: 92px;
+  min-height: 40px;
+  padding-inline: 14px;
+  flex-shrink: 0;
 }
 
 .live-bottom-headline {
@@ -2229,6 +2236,80 @@ img {
   gap: 12px;
   justify-content: flex-end;
   margin-left: auto;
+}
+
+.live-audio-insight {
+  width: 100%;
+  border-radius: 18px;
+  border: 1px solid rgba(36, 58, 102, 0.1);
+  background: rgba(255, 255, 255, 0.72);
+  padding: 14px 16px;
+}
+
+.live-audio-insight.status-pass {
+  border-color: rgba(59, 113, 79, 0.22);
+}
+
+.live-audio-insight.status-retry {
+  border-color: rgba(171, 122, 47, 0.22);
+}
+
+.live-audio-insight.status-unsafe {
+  border-color: rgba(154, 61, 45, 0.22);
+}
+
+.live-audio-insight-header {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.live-audio-insight-copy,
+.live-audio-insight-transcript {
+  margin: 10px 0 0;
+  color: #5f6d80;
+  font-size: 0.8rem;
+  line-height: 1.55;
+}
+
+.live-audio-insight-transcript {
+  color: #1b2b4a;
+  font-weight: 600;
+}
+
+.live-audio-insight-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+  gap: 12px;
+  margin-top: 14px;
+}
+
+.live-audio-insight-card {
+  border: 1px solid rgba(36, 58, 102, 0.1);
+  border-radius: 16px;
+  background: rgba(255, 255, 255, 0.82);
+  padding: 14px 16px;
+}
+
+.live-audio-insight-card.status-pass {
+  border-color: rgba(59, 113, 79, 0.22);
+}
+
+.live-audio-insight-card.status-retry {
+  border-color: rgba(171, 122, 47, 0.22);
+}
+
+.live-audio-insight-card.status-unsafe {
+  border-color: rgba(154, 61, 45, 0.22);
+}
+
+.live-audio-insight-card-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
 }
 
 @keyframes move-gradient {
@@ -2947,6 +3028,48 @@ img {
   position: relative;
   overflow: hidden;
   padding: 18px;
+}
+
+.trainer-camera-controls {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  margin-top: 16px;
+  padding: 14px 4px 0;
+}
+
+.trainer-camera-controls-copy {
+  min-width: 0;
+}
+
+.trainer-camera-controls-label {
+  margin: 0;
+  color: var(--muted);
+  font-size: 0.74rem;
+  font-weight: 700;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+}
+
+.trainer-camera-controls-status {
+  margin: 6px 0 0;
+  color: var(--ink);
+  font-size: 1rem;
+  font-weight: 600;
+}
+
+.trainer-camera-controls-actions {
+  display: flex;
+  gap: 12px;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+}
+
+.trainer-camera-controls-actions button {
+  flex-shrink: 0;
+  min-height: 44px;
+  padding-inline: 18px;
 }
 
 .trainer-camera-stage,
@@ -4266,6 +4389,12 @@ img {
     border-radius: 28px;
   }
 
+  .trainer-session-bar .live-bottom-primary-row {
+    flex-direction: column;
+    align-items: stretch;
+    gap: 16px;
+  }
+
   .trainer-session-bar .live-bottom-status {
     padding-left: 0;
     border-left: none;
@@ -4306,6 +4435,19 @@ img {
   .trainer-camera-card .camera-stage,
   .trainer-camera-card .camera-surface {
     min-height: 420px;
+  }
+
+  .trainer-camera-controls {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .trainer-camera-controls-actions {
+    width: 100%;
+  }
+
+  .trainer-camera-controls-actions button {
+    width: 100%;
   }
 
   .knowledge-metric-strip,

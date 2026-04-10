@@ -25,6 +25,11 @@ class SynthesizedSpeechAudio:
 
 EDGE_TTS_VOICE_IDS: dict[str, dict[str, list[str]]] = {
     "en": {
+        "guide_male": [
+            "en-US-GuyNeural",
+            "en-US-DavisNeural",
+            "en-US-TonyNeural",
+        ],
         "guide_female": [
             "en-US-JennyNeural",
             "en-US-AvaNeural",
@@ -38,8 +43,8 @@ EDGE_TTS_VOICE_IDS: dict[str, dict[str, list[str]]] = {
             "en-US-JennyNeural",
         ],
         "system_default": [
-            "en-US-EmmaNeural",
             "en-US-AvaNeural",
+            "en-US-EmmaNeural",
         ],
     },
     "es": {
@@ -60,12 +65,14 @@ EDGE_TTS_VOICE_IDS: dict[str, dict[str, list[str]]] = {
 }
 
 EDGE_TTS_RATE_BY_PRESET = {
+    "guide_male": "+0%",
     "guide_female": "+4%",
     "mentor_female": "-2%",
     "system_default": "+0%",
 }
 
 EDGE_TTS_PITCH_BY_PRESET = {
+    "guide_male": "+0Hz",
     "guide_female": "+2Hz",
     "mentor_female": "+0Hz",
     "system_default": "+0Hz",
@@ -74,9 +81,13 @@ EDGE_TTS_PITCH_BY_PRESET = {
 
 VOICE_ID_PREFERENCES: dict[str, dict[str, list[str]]] = {
     "en": {
-        "guide_female": ["gmw/en-us", "gmw/en-us-nyc", "gmw/en", "gmw/en-gb-x-rp"],
-        "mentor_female": ["gmw/en-us", "gmw/en-us-nyc", "gmw/en", "gmw/en-gb-x-rp"],
-        "system_default": ["gmw/en-us", "gmw/en"],
+        "guide_male": ["gmw/en-us-nyc", "gmw/en-us"],
+        "guide_female": ["gmw/en-us", "gmw/en-us-nyc"],
+        "mentor_female": [
+            "gmw/en-us-nyc",
+            "gmw/en-us",
+        ],
+        "system_default": ["gmw/en-us", "gmw/en-us-nyc"],
     },
     "es": {
         "guide_female": ["roa/es", "roa/es-419"],
@@ -96,12 +107,29 @@ VOICE_ID_PREFERENCES: dict[str, dict[str, list[str]]] = {
 }
 
 VOICE_RATE_BY_PRESET = {
+    "guide_male": 168,
     "guide_female": 176,
     "mentor_female": 160,
     "system_default": 180,
 }
 
 VOICE_NAME_HINTS_BY_PRESET = {
+    "guide_male": [
+        "america",
+        "american",
+        "andrew",
+        "brian",
+        "christopher",
+        "davis",
+        "david",
+        "eric",
+        "guy",
+        "james",
+        "matthew",
+        "new york",
+        "new york city",
+        "tony",
+    ],
     "guide_female": [
         "america",
         "american",
@@ -117,14 +145,20 @@ VOICE_NAME_HINTS_BY_PRESET = {
     "mentor_female": [
         "america",
         "american",
-        "catherine",
-        "hazel",
-        "karen",
-        "luna",
-        "moira",
-        "monica",
+        "allison",
+        "aria",
+        "ava",
+        "emma",
+        "jenny",
+        "kimberly",
+        "kendra",
+        "michelle",
+        "new york",
+        "new york city",
+        "samantha",
         "sara",
         "susan",
+        "victoria",
     ],
     "system_default": [],
 }
@@ -161,10 +195,15 @@ US_ENGLISH_VOICE_HINTS = [
 MALE_VOICE_HINTS = [
     "male",
     "+m",
+    "andrew",
     "alex",
     "arthur",
+    "brian",
+    "christopher",
+    "davis",
     "daniel",
     "david",
+    "eric",
     "fred",
     "guy",
     "james",
@@ -181,19 +220,30 @@ def synthesize_speech(payload: SpeechSynthesisRequest) -> SynthesizedSpeechAudio
     if not text:
         raise TTSSynthesisError("Speech text was empty after normalization.")
 
+    edge_error: RuntimeError | None = None
     try:
         return asyncio.run(_synthesize_with_edge_tts(text, payload))
-    except TTSConfigurationError:
-        raise
-    except TTSSynthesisError:
-        pass
-    except Exception:
-        pass
+    except (TTSConfigurationError, TTSSynthesisError) as exc:
+        edge_error = exc
+    except Exception as exc:
+        edge_error = TTSSynthesisError("Neural TTS could not synthesize speech.")
 
-    return SynthesizedSpeechAudio(
-        audio_bytes=_synthesize_with_pyttsx3(text, payload),
-        media_type="audio/wav",
-    )
+    try:
+        return SynthesizedSpeechAudio(
+            audio_bytes=_synthesize_with_pyttsx3(text, payload),
+            media_type="audio/wav",
+        )
+    except (TTSConfigurationError, TTSSynthesisError) as local_error:
+        if edge_error and isinstance(edge_error, TTSConfigurationError):
+            raise TTSConfigurationError(
+                f"{edge_error} Local fallback also failed: {local_error}"
+            ) from local_error
+
+        if edge_error:
+            raise TTSSynthesisError(
+                f"{edge_error} Local fallback also failed: {local_error}"
+            ) from local_error
+        raise
 
 
 def synthesize_speech_wav(payload: SpeechSynthesisRequest) -> bytes:
@@ -320,6 +370,11 @@ def _select_voice_id(*, engine: Any, language: str, coach_voice: str) -> str | N
     voices = engine.getProperty("voices") or []
     preferred_ids = VOICE_ID_PREFERENCES.get(language, {}).get(coach_voice, [])
     preferred_hints = VOICE_NAME_HINTS_BY_PRESET.get(coach_voice, [])
+    preferred_gender: str | None = None
+    if coach_voice in {"guide_female", "mentor_female"}:
+        preferred_gender = "female"
+    elif coach_voice == "guide_male":
+        preferred_gender = "male"
 
     best_voice_id: str | None = None
     best_score = float("-inf")
@@ -344,16 +399,24 @@ def _select_voice_id(*, engine: Any, language: str, coach_voice: str) -> str | N
         elif any(language.split("-")[0] in item for item in voice_languages):
             language_score = 12
 
-        preferred_id_score = 35 if voice_id in preferred_ids else 0
+        preferred_id_index = (
+            preferred_ids.index(voice_id) if voice_id in preferred_ids else None
+        )
+        preferred_id_score = (
+            48 - preferred_id_index if preferred_id_index is not None else 0
+        )
         preferred_hint_score = (
             18
             if any(hint in combined_voice_text for hint in preferred_hints)
             else 0
         )
-        female_score = (
+        gender_score = (
             24
-            if coach_voice != "system_default"
+            if preferred_gender == "female"
             and any(hint in combined_voice_text for hint in FEMALE_VOICE_HINTS)
+            else 24
+            if preferred_gender == "male"
+            and any(hint in combined_voice_text for hint in MALE_VOICE_HINTS)
             else 0
         )
         us_english_score = (
@@ -363,19 +426,22 @@ def _select_voice_id(*, engine: Any, language: str, coach_voice: str) -> str | N
             and any(hint in combined_voice_text for hint in US_ENGLISH_VOICE_HINTS)
             else 0
         )
-        male_penalty = (
+        gender_mismatch_penalty = (
             -10
-            if coach_voice != "system_default"
+            if preferred_gender == "female"
             and any(hint in combined_voice_text for hint in MALE_VOICE_HINTS)
+            else -10
+            if preferred_gender == "male"
+            and any(hint in combined_voice_text for hint in FEMALE_VOICE_HINTS)
             else 0
         )
         score = (
             language_score
             + preferred_id_score
             + preferred_hint_score
-            + female_score
+            + gender_score
             + us_english_score
-            + male_penalty
+            + gender_mismatch_penalty
         )
 
         if score > best_score:

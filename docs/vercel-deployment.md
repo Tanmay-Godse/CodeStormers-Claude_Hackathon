@@ -79,8 +79,10 @@ The seeded public judge accounts are still useful for a controlled demo:
 1. Open `/login`.
 2. Create a normal student account or sign in with one judge account.
 3. Confirm `/dashboard`, `/knowledge`, and `/library` load.
-4. Start a live session and confirm analysis requests reach the backend.
-5. Confirm `FRONTEND_ORIGIN` matches the deployed frontend URL exactly.
+4. Open `/train/simple-interrupted-suture` and confirm the `Setup` tab loads its preflight checks.
+5. Run `Check Audio` and confirm browser/backend speech diagnostics appear as expected for that environment.
+6. Start a live session and confirm analysis requests reach the backend.
+7. Confirm `FRONTEND_ORIGIN` matches the deployed frontend URL exactly.
 
 ## Related Docs
 

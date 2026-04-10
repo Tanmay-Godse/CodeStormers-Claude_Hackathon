@@ -11,6 +11,7 @@ from app.api.routes import (
     learning_state,
     procedures,
     review_cases,
+    transcription,
     tts,
 )
 from app.core.config import settings
@@ -35,3 +36,4 @@ app.include_router(debrief.router, prefix="/api/v1")
 app.include_router(knowledge.router, prefix="/api/v1")
 app.include_router(learning_state.router, prefix="/api/v1")
 app.include_router(review_cases.router, prefix="/api/v1")
+app.include_router(transcription.router, prefix="/api/v1")

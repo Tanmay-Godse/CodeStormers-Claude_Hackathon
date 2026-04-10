@@ -6,6 +6,7 @@ from app.api.routes import (
     knowledge,
     learning_state,
     procedures,
+    transcription,
     tts,
 )
 
@@ -17,5 +18,6 @@ __all__ = [
     "knowledge",
     "learning_state",
     "procedures",
+    "transcription",
     "tts",
 ]
