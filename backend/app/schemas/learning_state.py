@@ -20,7 +20,7 @@ class UpsertLearningSessionRequest(LearningStateAuthRequest):
 class UpsertKnowledgeProgressRequest(LearningStateAuthRequest):
     model_config = ConfigDict(extra="forbid")
 
-    progress: dict[str, int]
+    progress: dict[str, Any]
 
 
 class LearningStateSnapshot(BaseModel):
@@ -28,4 +28,4 @@ class LearningStateSnapshot(BaseModel):
 
     sessions: list[dict[str, Any]] = Field(default_factory=list)
     active_session_ids: dict[str, str] = Field(default_factory=dict)
-    knowledge_progress: dict[str, int] = Field(default_factory=dict)
+    knowledge_progress: dict[str, Any] = Field(default_factory=dict)

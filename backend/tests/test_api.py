@@ -630,11 +630,20 @@ def test_learning_state_round_trip_persists_sessions_and_progress(
                 "perfectRounds": 1,
                 "rapidfireBestStreak": 5,
                 "totalPoints": 120,
+                "recentQuestionPrompts": [
+                    "What matters most in needle entry?"
+                ],
+                "recentFlashcardFronts": [
+                    "Needle Entry"
+                ],
             },
         },
     )
     assert progress_response.status_code == 200
     assert progress_response.json()["totalPoints"] == 120
+    assert progress_response.json()["recentQuestionPrompts"] == [
+        "What matters most in needle entry?"
+    ]
 
     snapshot_response = client.get(
         "/api/v1/learning-state",
@@ -649,6 +658,7 @@ def test_learning_state_round_trip_persists_sessions_and_progress(
         "simple-interrupted-suture": "session-demo-1"
     }
     assert snapshot["knowledge_progress"]["rapidfireBestStreak"] == 5
+    assert snapshot["knowledge_progress"]["recentFlashcardFronts"] == ["Needle Entry"]
     assert len(snapshot["sessions"]) == 1
     assert snapshot["sessions"][0]["id"] == "session-demo-1"
     assert snapshot["sessions"][0]["ownerUsername"] == "student_1@gmail.com"

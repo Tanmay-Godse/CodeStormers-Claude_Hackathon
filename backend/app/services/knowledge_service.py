@@ -35,7 +35,7 @@ def generate_knowledge_pack(payload: KnowledgePackRequest) -> KnowledgePackRespo
     except (AIConfigurationError, AIRequestError, AIResponseError):
         return fallback_response
 
-    return _normalize_knowledge_pack(response_data, fallback_response)
+    return _normalize_knowledge_pack(response_data, fallback_response, payload)
 
 
 def _build_knowledge_system_prompt(
@@ -56,6 +56,8 @@ def _build_knowledge_system_prompt(
         f"{topic_instruction}"
         "Keep the content educational, concise, motivating, and student-friendly for a hackathon demo. "
         "The pack must include a rapidfire round, a deeper quiz, flashcards, and topic suggestions. "
+        "Every request is a fresh round, so do not recycle old wording when a new pack is requested. "
+        "Treat avoid_question_prompts and avoid_flashcard_fronts as blocked history from earlier learner sessions and do not repeat them. "
         "Current procedure mode should stay close to the stage rubric. "
         "Related topics mode may branch into adjacent concepts like instrument handling, framing, spacing, and error recognition, while still staying relevant to the procedure. "
         "Common mistakes mode should help the learner recognize repeated misses and how to reset. "
@@ -81,6 +83,9 @@ def _build_knowledge_user_content(
         "study_mode": payload.study_mode,
         "selected_topic": payload.selected_topic,
         "recent_issue_labels": payload.recent_issue_labels,
+        "avoid_question_prompts": _clean_text_list(payload.avoid_question_prompts)[-24:],
+        "avoid_flashcard_fronts": _clean_text_list(payload.avoid_flashcard_fronts)[-24:],
+        "generation_nonce": _clean_text(payload.generation_nonce),
         "topic_suggestions": [topic.model_dump(mode="json") for topic in suggestions],
         "stages": [stage.model_dump(mode="json") for stage in procedure.stages],
         "overlay_targets": [
@@ -676,6 +681,7 @@ def _resolve_selected_topic(
 def _normalize_knowledge_pack(
     response_data: dict[str, Any],
     fallback_response: KnowledgePackResponse,
+    payload: KnowledgePackRequest,
 ) -> KnowledgePackResponse:
     study_mode = _coerce_study_mode(response_data.get("study_mode")) or fallback_response.study_mode
     topic_title = _clean_text(response_data.get("topic_title")) or fallback_response.topic_title
@@ -707,7 +713,7 @@ def _normalize_knowledge_pack(
         fallback_response.flashcards,
     )
 
-    return KnowledgePackResponse(
+    normalized_response = KnowledgePackResponse(
         study_mode=study_mode,
         topic_title=topic_title,
         title=title,
@@ -718,6 +724,11 @@ def _normalize_knowledge_pack(
         rapidfire_rounds=rapidfire,
         quiz_questions=quiz,
         flashcards=flashcards,
+    )
+    return _freshen_knowledge_pack_against_history(
+        normalized_response,
+        fallback_response,
+        payload,
     )
 
 
@@ -828,6 +839,165 @@ def _normalize_flashcard_list(
     return normalized
 
 
+def _freshen_knowledge_pack_against_history(
+    response: KnowledgePackResponse,
+    fallback_response: KnowledgePackResponse,
+    payload: KnowledgePackRequest,
+) -> KnowledgePackResponse:
+    used_question_prompts = {
+        _normalize_text_key(prompt) for prompt in payload.avoid_question_prompts
+    }
+    used_flashcard_fronts = {
+        _normalize_text_key(front) for front in payload.avoid_flashcard_fronts
+    }
+
+    rapidfire_rounds = _freshen_mcq_list(
+        response.rapidfire_rounds,
+        fallback_response.rapidfire_rounds,
+        used_question_prompts,
+    )
+    quiz_questions = _freshen_mcq_list(
+        response.quiz_questions,
+        fallback_response.quiz_questions,
+        used_question_prompts,
+    )
+    flashcards = _freshen_flashcard_list(
+        response.flashcards,
+        fallback_response.flashcards,
+        used_flashcard_fronts,
+    )
+
+    return response.model_copy(
+        update={
+            "rapidfire_rounds": rapidfire_rounds,
+            "quiz_questions": quiz_questions,
+            "flashcards": flashcards,
+        }
+    )
+
+
+def _freshen_mcq_list(
+    items: list[KnowledgeMultipleChoiceQuestion],
+    fallback_items: list[KnowledgeMultipleChoiceQuestion],
+    used_prompts: set[str],
+) -> list[KnowledgeMultipleChoiceQuestion]:
+    refreshed: list[KnowledgeMultipleChoiceQuestion] = []
+
+    for index, item in enumerate(items):
+        candidate = item
+        candidate_key = _normalize_text_key(candidate.prompt)
+
+        if candidate_key in used_prompts:
+            replacement = _pick_unused_mcq(fallback_items, used_prompts)
+            if replacement is not None:
+                candidate = replacement.model_copy(
+                    update={"id": f"{replacement.id}-fresh-{index + 1}"}
+                )
+            else:
+                candidate = candidate.model_copy(
+                    update={
+                        "id": f"{candidate.id}-fresh-{index + 1}",
+                        "prompt": _build_fresh_prompt_variant(candidate, used_prompts, index),
+                    }
+                )
+            candidate_key = _normalize_text_key(candidate.prompt)
+
+        refreshed.append(candidate)
+        used_prompts.add(candidate_key)
+
+    return refreshed
+
+
+def _freshen_flashcard_list(
+    items: list[KnowledgeFlashcard],
+    fallback_items: list[KnowledgeFlashcard],
+    used_fronts: set[str],
+) -> list[KnowledgeFlashcard]:
+    refreshed: list[KnowledgeFlashcard] = []
+
+    for index, item in enumerate(items):
+        candidate = item
+        candidate_key = _normalize_text_key(candidate.front)
+
+        if candidate_key in used_fronts:
+            replacement = _pick_unused_flashcard(fallback_items, used_fronts)
+            if replacement is not None:
+                candidate = replacement.model_copy(
+                    update={"id": f"{replacement.id}-fresh-{index + 1}"}
+                )
+            else:
+                candidate = candidate.model_copy(
+                    update={
+                        "id": f"{candidate.id}-fresh-{index + 1}",
+                        "front": _build_fresh_flashcard_front(candidate, used_fronts, index),
+                    }
+                )
+            candidate_key = _normalize_text_key(candidate.front)
+
+        refreshed.append(candidate)
+        used_fronts.add(candidate_key)
+
+    return refreshed
+
+
+def _pick_unused_mcq(
+    items: list[KnowledgeMultipleChoiceQuestion],
+    used_prompts: set[str],
+) -> KnowledgeMultipleChoiceQuestion | None:
+    for item in items:
+        if _normalize_text_key(item.prompt) not in used_prompts:
+            return item
+    return None
+
+
+def _pick_unused_flashcard(
+    items: list[KnowledgeFlashcard],
+    used_fronts: set[str],
+) -> KnowledgeFlashcard | None:
+    for item in items:
+        if _normalize_text_key(item.front) not in used_fronts:
+            return item
+    return None
+
+
+def _build_fresh_prompt_variant(
+    question: KnowledgeMultipleChoiceQuestion,
+    used_prompts: set[str],
+    salt: int,
+) -> str:
+    stage_label = _to_title(question.stage_id.replace("_", " "))
+    prompt_variants = [
+        f"Which visible cue matters most during {stage_label}?",
+        f"What should the learner protect first in {stage_label}?",
+        f"Which checkpoint best matches the {stage_label} stage?",
+        f"What does a cleaner {stage_label} rep need to show?",
+    ]
+
+    for offset, variant in enumerate(prompt_variants):
+        if _normalize_text_key(variant) not in used_prompts:
+            return variant
+
+    return f"{question.prompt} Round {salt + 1}"
+
+
+def _build_fresh_flashcard_front(
+    flashcard: KnowledgeFlashcard,
+    used_fronts: set[str],
+    salt: int,
+) -> str:
+    front_variants = [
+        f"{flashcard.front} Quick Cue",
+        f"{flashcard.front} Focus Check",
+        f"{flashcard.front} Reset Point",
+    ]
+
+    for variant in front_variants:
+        if _normalize_text_key(variant) not in used_fronts:
+            return variant
+
+    return f"{flashcard.front} {salt + 1}"
+
+
 def _build_choices(
     correct: str,
     distractors: list[str],
@@ -867,10 +1037,18 @@ def _unique_items(values: Any) -> list[str]:
     return items
 
 
+def _clean_text_list(values: list[str]) -> list[str]:
+    return _unique_items(values)
+
+
 def _clean_text(value: Any) -> str:
     if not isinstance(value, str):
         return ""
     return " ".join(value.split()).strip()
+
+
+def _normalize_text_key(value: str) -> str:
+    return _clean_text(value).casefold()
 
 
 def _coerce_study_mode(value: Any) -> KnowledgeStudyMode | None:

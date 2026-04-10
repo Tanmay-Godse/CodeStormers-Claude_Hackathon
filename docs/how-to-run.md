@@ -144,7 +144,7 @@ audio-diagnostic, and image-analysis actions:
 5. Run `Check Audio`, speak one short sentence, and confirm the footer shows Browser STT plus Backend Transcribe results when backend transcription is configured.
 6. Start the camera.
 7. Allow camera and microphone permissions if the browser asks.
-8. Frame a clearly visible simulated surface such as an orange, banana, or foam pad.
+8. Frame a clearly visible simulated surface such as any fruit or foam pad.
 9. Use `Check My Step` to grade the setup stage.
 10. Confirm the trainer shows the current stage, voice-coach status, and the `2-minute` session timer.
 11. Optionally test `Pause Session` and `End Session` so the live controls are confirmed before a demo.

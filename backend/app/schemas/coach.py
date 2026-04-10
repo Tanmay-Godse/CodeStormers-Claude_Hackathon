@@ -19,6 +19,7 @@ class CoachChatRequest(BaseModel):
     stage_id: str
     skill_level: Literal["beginner", "intermediate"]
     practice_surface: str | None = None
+    learner_focus: str | None = None
     feedback_language: FeedbackLanguage = "en"
     simulation_confirmation: bool = False
     image_base64: str | None = None

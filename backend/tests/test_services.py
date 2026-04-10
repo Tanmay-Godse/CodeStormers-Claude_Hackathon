@@ -153,7 +153,7 @@ def test_analysis_service_accepts_setup_when_simulation_surface_is_cleared(monke
             skill_level="beginner",
             image_base64="ZmFrZQ==",
             simulation_confirmation=True,
-            practice_surface="Orange, banana, or foam pad",
+            practice_surface="Any fruit or foam pad",
         )
     )
 
@@ -376,6 +376,99 @@ def test_knowledge_service_backfills_partial_ai_payload(monkeypatch) -> None:
     assert response.rapidfire_rounds[0].prompt == "What matters most in needle entry?"
 
 
+def test_knowledge_service_passes_seen_history_to_model(monkeypatch) -> None:
+    captured: dict[str, object] = {}
+
+    def fake_send_json_message(**kwargs):
+        captured["request"] = kwargs
+        return {
+            "study_mode": "current_procedure",
+            "topic_title": "Procedure Overview",
+            "title": "Fresh Suturing Round",
+            "summary": "Brand-new study prompts.",
+            "recommended_focus": "needle entry consistency",
+            "celebration_line": "New round ready.",
+            "topic_suggestions": [],
+            "rapidfire_rounds": [],
+            "quiz_questions": [],
+            "flashcards": [],
+        }
+
+    monkeypatch.setattr(
+        knowledge_service,
+        "send_json_message",
+        fake_send_json_message,
+    )
+
+    knowledge_service.generate_knowledge_pack(
+        KnowledgePackRequest(
+            procedure_id="simple-interrupted-suture",
+            skill_level="beginner",
+            avoid_question_prompts=["What matters most in needle entry?"],
+            avoid_flashcard_fronts=["Needle Entry"],
+            generation_nonce="round-42",
+        )
+    )
+
+    request = captured["request"]
+    assert isinstance(request, dict)
+    user_content = request["user_content"]
+    assert isinstance(user_content, list)
+    text_block = user_content[0]
+    assert isinstance(text_block, dict)
+    assert "What matters most in needle entry?" in text_block["text"]
+    assert "Needle Entry" in text_block["text"]
+    assert "round-42" in text_block["text"]
+
+
+def test_knowledge_service_freshens_repeated_prompt_from_history(monkeypatch) -> None:
+    monkeypatch.setattr(
+        knowledge_service,
+        "send_json_message",
+        lambda **_: {
+            "study_mode": "current_procedure",
+            "topic_title": "Procedure Overview",
+            "title": "Procedure Overview knowledge lab",
+            "summary": "A new round.",
+            "recommended_focus": "needle entry consistency",
+            "celebration_line": "Fresh round.",
+            "topic_suggestions": [],
+            "rapidfire_rounds": [
+                {
+                    "id": "rapid-1",
+                    "stage_id": "needle_entry",
+                    "prompt": "What is the main goal of the Needle Entry stage?",
+                    "choices": [
+                        "Approach at a confident entry angle",
+                        "Skip directly to knot tie",
+                        "Hide the entry point",
+                        "Ignore the practice line",
+                    ],
+                    "correct_index": 0,
+                    "explanation": "The trainer wants a confident, visible first bite.",
+                    "point_value": 10,
+                    "difficulty": "warmup",
+                }
+            ]
+            * 5,
+            "quiz_questions": [],
+            "flashcards": [],
+        },
+    )
+
+    response = knowledge_service.generate_knowledge_pack(
+        KnowledgePackRequest(
+            procedure_id="simple-interrupted-suture",
+            skill_level="beginner",
+            avoid_question_prompts=[
+                "What is the main goal of the Needle Entry stage?"
+            ],
+        )
+    )
+
+    assert response.rapidfire_rounds[0].prompt != "What is the main goal of the Needle Entry stage?"
+
+
 def test_coach_service_transcribes_audio_before_sending_to_model(monkeypatch) -> None:
     captured = {}
 
@@ -472,6 +565,60 @@ def test_coach_service_fallback_waits_for_learner_after_assistant_turn() -> None
     assert "show the" in response.coach_message.lower()
     assert "when you are ready" in response.coach_message.lower()
     assert "wait for the learner" in response.plan_summary.lower()
+
+
+def test_coach_service_fallback_uses_learner_focus_when_no_new_user_message() -> None:
+    response = coach_service._build_fallback_response(
+        payload=CoachChatRequest(
+            procedure_id="simple-interrupted-suture",
+            stage_id="needle_entry",
+            skill_level="beginner",
+            simulation_confirmation=True,
+            learner_focus="needle entry consistency",
+            messages=[],
+        ),
+        procedure=coach_service.load_procedure("simple-interrupted-suture"),
+        stage=coach_service.load_stage(
+            coach_service.load_procedure("simple-interrupted-suture"),
+            "needle_entry",
+        ),
+    )
+
+    assert response.conversation_stage == "guiding"
+    assert "needle entry consistency" in response.coach_message.lower()
+    assert "needle entry consistency" in response.plan_summary.lower()
+    assert response.learner_goal_summary == "needle entry consistency"
+    assert response.learner_transcript == ""
+
+
+def test_coach_service_fallback_answers_latest_learner_question() -> None:
+    response = coach_service._build_fallback_response(
+        payload=CoachChatRequest(
+            procedure_id="simple-interrupted-suture",
+            stage_id="needle_entry",
+            skill_level="beginner",
+            simulation_confirmation=True,
+            image_base64="ZmFrZQ==",
+            messages=[
+                CoachChatMessage(
+                    role="user",
+                    content="Am I too shallow on the entry?",
+                )
+            ],
+        ),
+        procedure=coach_service.load_procedure("simple-interrupted-suture"),
+        stage=coach_service.load_stage(
+            coach_service.load_procedure("simple-interrupted-suture"),
+            "needle_entry",
+        ),
+    )
+
+    assert response.conversation_stage == "guiding"
+    assert "good question" in response.coach_message.lower()
+    assert "real time" in response.coach_message.lower()
+    assert "show" in response.suggested_next_step.lower()
+    assert response.learner_goal_summary == "Needle Entry guidance"
+    assert response.learner_transcript == "Am I too shallow on the entry?"
 
 
 def test_safety_service_blocks_without_simulation_confirmation() -> None:
@@ -584,7 +731,7 @@ def test_safety_service_clears_setup_when_classifier_fails(
         skill_level="beginner",
         image_base64="ZmFrZQ==",
         simulation_confirmation=True,
-        practice_surface="Orange, banana, or foam pad",
+        practice_surface="Any fruit or foam pad",
     )
 
     procedure = analysis_service.load_procedure("simple-interrupted-suture")

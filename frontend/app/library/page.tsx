@@ -21,7 +21,7 @@ const fallbackProcedure: ProcedureDefinition = {
   id: "simple-interrupted-suture",
   title: "Simple Interrupted Suture",
   simulation_only: true,
-  practice_surface: "Orange, banana, or foam pad",
+  practice_surface: "Any fruit or foam pad",
   named_overlay_targets: [
     {
       id: "surface_center",

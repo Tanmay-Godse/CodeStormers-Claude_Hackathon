@@ -42,19 +42,29 @@ function LoginPageContent() {
   const [confirmPassword, setConfirmPassword] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
-  const activeRole = requestedRole ?? role;
+  const activeRole = role;
 
   function resolveDestination(targetAccount: Pick<AuthUser, "isDeveloper" | "role">) {
-    if (requestedRole && targetAccount.role === requestedRole) {
+    if (
+      nextPath &&
+      targetAccount.role === activeRole &&
+      (!requestedRole || activeRole === requestedRole)
+    ) {
       return nextPath ?? getDefaultDestination(targetAccount);
     }
 
-    if (!requestedRole && nextPath) {
+    if (nextPath && !requestedRole && targetAccount.role === activeRole) {
       return nextPath;
     }
 
     return getDefaultDestination(targetAccount);
   }
+
+  useEffect(() => {
+    if (requestedRole) {
+      setRole(requestedRole);
+    }
+  }, [requestedRole]);
 
   useEffect(() => {
     let cancelled = false;
@@ -85,7 +95,7 @@ function LoginPageContent() {
   }, []);
 
   const requestedRoleMismatch =
-    currentUser && requestedRole ? currentUser.role !== requestedRole : false;
+    currentUser ? currentUser.role !== activeRole : false;
 
   async function handleSignIn(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -182,9 +192,9 @@ function LoginPageContent() {
 
             <div className="auth-flow-meta">
               <span className="pill">
-                {requestedRole
-                  ? resolveDestination({ isDeveloper: false, role: requestedRole })
-                  : "match workspace after sign-in"}
+                {activeRole === "admin"
+                  ? "admin or developer workspace after sign-in"
+                  : "student workspace after sign-in"}
               </span>
             </div>
 
@@ -229,8 +239,8 @@ function LoginPageContent() {
                 ) : null}
                 {requestedRoleMismatch ? (
                   <p className="feedback-copy" style={{ marginTop: 12 }}>
-                    This link was opened for a {requestedRole} route, but your saved account
-                    is {currentUser.role}. Continue to the matching workspace or sign out.
+                    Your saved account is {currentUser.role}, but the form is set to the{" "}
+                    {activeRole} workspace. Continue to the matching workspace or sign out.
                   </p>
                 ) : null}
                 {currentUser.requestedRole === "admin" &&
@@ -271,7 +281,6 @@ function LoginPageContent() {
                 <div className="role-switch">
                   <button
                     className={`role-card ${role === "student" ? "is-active" : ""}`}
-                    disabled={Boolean(requestedRole)}
                     onClick={() => setRole("student")}
                     type="button"
                   >
@@ -284,15 +293,14 @@ function LoginPageContent() {
                   </button>
                   <button
                     className={`role-card ${role === "admin" ? "is-active" : ""}`}
-                    disabled={Boolean(requestedRole)}
                     onClick={() => setRole("admin")}
                     type="button"
                   >
-                    <span className="feature-index">Admin</span>
-                    <strong>Review flagged cases</strong>
+                    <span className="feature-index">Admin / Developer</span>
+                    <strong>Review and approvals</strong>
                     <p className="panel-copy">
-                      Request access to the admin review queue for human validation
-                      workflows.
+                      Admin reviewers and developer accounts both sign in through this
+                      workspace.
                     </p>
                   </button>
                 </div>
@@ -339,6 +347,9 @@ function LoginPageContent() {
 
                     <p className="auth-helper-copy">
                       You are signing in for the <strong>{activeRole}</strong> workspace.
+                      {activeRole === "admin"
+                        ? " Developer accounts also use this route."
+                        : ""}
                     </p>
 
                     <button className="button-primary" disabled={isSubmitting} type="submit">
@@ -378,7 +389,6 @@ function LoginPageContent() {
                       <label className="field-label">
                         Role
                         <select
-                          disabled={Boolean(requestedRole)}
                           onChange={(event) => setRole(event.target.value as UserRole)}
                           value={activeRole}
                         >

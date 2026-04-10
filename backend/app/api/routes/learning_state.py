@@ -55,11 +55,11 @@ def upsert_learning_session(
 
 @router.put(
     "/learning-state/knowledge-progress",
-    response_model=dict[str, int],
+    response_model=dict[str, Any],
 )
 def upsert_knowledge_progress(
     payload: UpsertKnowledgeProgressRequest,
-) -> dict[str, int]:
+) -> dict[str, Any]:
     try:
         return learning_state_service.upsert_knowledge_progress(
             account_id=payload.account_id,

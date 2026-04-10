@@ -542,7 +542,7 @@ export const CameraFeed = forwardRef<CameraFeedHandle, CameraFeedProps>(
               <h3>{emptyStateTitle}</h3>
               <p>
                 {status.message ??
-                  "Frame the orange, banana, or foam pad on a clear practice field."}
+                  "Frame any fruit or foam pad on a clear practice field."}
               </p>
               <button
                 className="button-primary"

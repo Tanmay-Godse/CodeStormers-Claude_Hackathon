@@ -163,7 +163,7 @@ Current demo constraints:
 
 - one core procedure: `simple-interrupted-suture`
 - each camera run is limited to `2 minutes`
-- setup accepts clearly visible simulated surfaces such as an orange, banana, or foam pad
+- setup accepts clearly visible simulated surfaces such as any fruit or foam pad
 - student accounts default to `10` live sessions unless a different limit is seeded
 
 Setup and audio flow:

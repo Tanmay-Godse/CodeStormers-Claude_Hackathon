@@ -94,7 +94,7 @@ def evaluate_safety_gate(
     if draft.status == "blocked" and not refusal_message:
         refusal_message = (
             "Analysis was blocked because the image may depict a real patient or live clinical scene. "
-            "Use only simulation images from an orange, banana, or foam pad."
+            "Use only simulation images from any fruit or foam pad."
         )
     if draft.status == "needs_human_review" and not refusal_message:
         refusal_message = (

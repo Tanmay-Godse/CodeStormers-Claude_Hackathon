@@ -55,6 +55,9 @@ class KnowledgePackRequest(BaseModel):
     study_mode: KnowledgeStudyMode = "current_procedure"
     selected_topic: str | None = None
     recent_issue_labels: list[str] = Field(default_factory=list, max_length=5)
+    avoid_question_prompts: list[str] = Field(default_factory=list, max_length=80)
+    avoid_flashcard_fronts: list[str] = Field(default_factory=list, max_length=80)
+    generation_nonce: str | None = None
 
 
 class KnowledgePackResponse(BaseModel):

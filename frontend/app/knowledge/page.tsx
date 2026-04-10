@@ -27,6 +27,7 @@ import { useWorkspaceUser } from "@/lib/useWorkspaceUser";
 
 const KNOWLEDGE_PROCEDURE_ID = "simple-interrupted-suture";
 const RAPIDFIRE_SECONDS = 12;
+const KNOWLEDGE_HISTORY_LIMIT = 48;
 
 type KnowledgeTab = "flashcards" | "quiz" | "rapidfire";
 
@@ -183,6 +184,38 @@ function resetQuizState() {
   };
 }
 
+function normalizeKnowledgeHistory(values: string[]) {
+  const normalized: string[] = [];
+
+  for (const value of values) {
+    const cleaned = value.trim();
+    if (!cleaned || normalized.includes(cleaned)) {
+      continue;
+    }
+    normalized.push(cleaned);
+  }
+
+  return normalized.slice(-KNOWLEDGE_HISTORY_LIMIT);
+}
+
+function appendKnowledgePackHistory(
+  previous: KnowledgeProgress,
+  pack: KnowledgePackResponse,
+): KnowledgeProgress {
+  return {
+    ...previous,
+    recentQuestionPrompts: normalizeKnowledgeHistory([
+      ...previous.recentQuestionPrompts,
+      ...pack.rapidfire_rounds.map((question) => question.prompt),
+      ...pack.quiz_questions.map((question) => question.prompt),
+    ]),
+    recentFlashcardFronts: normalizeKnowledgeHistory([
+      ...previous.recentFlashcardFronts,
+      ...pack.flashcards.map((flashcard) => flashcard.front),
+    ]),
+  };
+}
+
 export default function KnowledgePage() {
   const router = useRouter();
   const { hydrated, sessions, user } = useWorkspaceUser();
@@ -201,6 +234,11 @@ export default function KnowledgePage() {
   const [flashcardFlipped, setFlashcardFlipped] = useState(false);
   const [flashcardsKnown, setFlashcardsKnown] = useState<string[]>([]);
   const knowledgeRequestIdRef = useRef(0);
+  const progressRef = useRef(progress);
+
+  useEffect(() => {
+    progressRef.current = progress;
+  }, [progress]);
 
   useEffect(() => {
     if (hydrated && !user) {
@@ -305,6 +343,12 @@ export default function KnowledgePage() {
           study_mode: nextStudyMode,
           selected_topic: nextSelectedTopic || undefined,
           recent_issue_labels: recentIssueLabels,
+          avoid_question_prompts: progressRef.current.recentQuestionPrompts,
+          avoid_flashcard_fronts: progressRef.current.recentFlashcardFronts,
+          generation_nonce:
+            typeof crypto !== "undefined" && "randomUUID" in crypto
+              ? crypto.randomUUID()
+              : `${Date.now()}`,
         });
         if (knowledgeRequestIdRef.current !== requestId) {
           return;
@@ -313,6 +357,11 @@ export default function KnowledgePage() {
         setStudyMode(nextPack.study_mode);
         setSelectedTopic(nextPack.topic_title);
         resetInteractiveState();
+        updateProgress((previous) => {
+          const nextProgress = appendKnowledgePackHistory(previous, nextPack);
+          progressRef.current = nextProgress;
+          return nextProgress;
+        });
       } catch (error) {
         if (knowledgeRequestIdRef.current !== requestId) {
           return;
@@ -335,6 +384,7 @@ export default function KnowledgePage() {
       recentIssueLabels,
       selectedTopic,
       studyMode,
+      updateProgress,
       user,
     ],
   );

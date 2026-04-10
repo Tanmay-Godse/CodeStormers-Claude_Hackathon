@@ -21,6 +21,8 @@ DEFAULT_KNOWLEDGE_PROGRESS = {
     "perfectRounds": 0,
     "rapidfireBestStreak": 0,
     "totalPoints": 0,
+    "recentQuestionPrompts": [],
+    "recentFlashcardFronts": [],
 }
 
 
@@ -187,8 +189,8 @@ def upsert_knowledge_progress(
     *,
     account_id: str,
     session_token: str,
-    progress: dict[str, int],
-) -> dict[str, int]:
+    progress: dict[str, Any],
+) -> dict[str, Any]:
     account = _authenticate_account(account_id=account_id, session_token=session_token)
     normalized_progress = _normalize_knowledge_progress(progress)
     updated_at = _now_iso()
@@ -267,15 +269,29 @@ def _normalize_session_payload(
     return normalized_session
 
 
-def _normalize_knowledge_progress(progress: Any) -> dict[str, int]:
+def _normalize_knowledge_progress(progress: Any) -> dict[str, Any]:
     if progress is None:
         return dict(DEFAULT_KNOWLEDGE_PROGRESS)
     if not isinstance(progress, dict):
         raise LearningStateValidationError("Knowledge progress payload must be an object.")
 
-    normalized_progress: dict[str, int] = {}
+    normalized_progress: dict[str, Any] = {}
     for key, default_value in DEFAULT_KNOWLEDGE_PROGRESS.items():
         value = progress.get(key, default_value)
+        if isinstance(default_value, list):
+            if not isinstance(value, list):
+                normalized_progress[key] = list(default_value)
+                continue
+            cleaned_values: list[str] = []
+            for item in value:
+                if not isinstance(item, str):
+                    continue
+                cleaned = item.strip()
+                if not cleaned or cleaned in cleaned_values:
+                    continue
+                cleaned_values.append(cleaned)
+            normalized_progress[key] = cleaned_values[-80:]
+            continue
         if not isinstance(value, int) or value < 0:
             normalized_progress[key] = default_value
             continue

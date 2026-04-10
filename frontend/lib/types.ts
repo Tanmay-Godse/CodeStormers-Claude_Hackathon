@@ -94,6 +94,9 @@ export type KnowledgePackRequest = {
   study_mode?: KnowledgeStudyMode;
   selected_topic?: string;
   recent_issue_labels?: string[];
+  avoid_question_prompts?: string[];
+  avoid_flashcard_fronts?: string[];
+  generation_nonce?: string;
 };
 
 export type KnowledgePackResponse = {
@@ -143,6 +146,7 @@ export type CoachChatRequest = {
   stage_id: string;
   skill_level: SkillLevel;
   practice_surface?: string;
+  learner_focus?: string;
   feedback_language: FeedbackLanguage;
   simulation_confirmation: boolean;
   image_base64?: string;
@@ -445,6 +449,8 @@ export type KnowledgeProgress = {
   perfectRounds: number;
   rapidfireBestStreak: number;
   totalPoints: number;
+  recentQuestionPrompts: string[];
+  recentFlashcardFronts: string[];
 };
 
 export type SessionRecord = {

@@ -1262,6 +1262,7 @@ function playBrowserSpeech(
     let speechStarted = false;
     let startTimer: number | null = null;
     let completionTimer: number | null = null;
+    let handleVoicesChanged: (() => void) | null = null;
 
     const finalize = (didFinish: boolean) => {
       if (settled) {
@@ -1284,7 +1285,9 @@ function playBrowserSpeech(
         completionTimer = null;
       }
 
-      synth.removeEventListener?.("voiceschanged", handleVoicesChanged);
+      if (handleVoicesChanged) {
+        synth.removeEventListener?.("voiceschanged", handleVoicesChanged);
+      }
 
       if (activeSpeechPlaybackCleanup === cleanup) {
         activeSpeechPlaybackCleanup = null;
@@ -1335,7 +1338,7 @@ function playBrowserSpeech(
     }
 
     let didSpeak = false;
-    const handleVoicesChanged = () => {
+    handleVoicesChanged = () => {
       if (didSpeak || settled) {
         return;
       }

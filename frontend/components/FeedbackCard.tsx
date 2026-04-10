@@ -12,6 +12,7 @@ type FeedbackCardProps = {
   isAnalyzing: boolean;
   error: string | null;
   audioEnabled?: boolean;
+  autoSpeakEnabled?: boolean;
   feedbackLanguage: FeedbackLanguage;
   coachVoice: CoachVoicePreset;
 };
@@ -31,6 +32,7 @@ export function FeedbackCard({
   isAnalyzing,
   error,
   audioEnabled = false,
+  autoSpeakEnabled = true,
   feedbackLanguage,
   coachVoice,
 }: FeedbackCardProps) {
@@ -46,6 +48,7 @@ export function FeedbackCard({
     if (
       !response ||
       !audioEnabled ||
+      !autoSpeakEnabled ||
       !response.coaching_message.trim() ||
       response.coaching_message === lastSpokenMessageRef.current
     ) {
@@ -61,7 +64,7 @@ export function FeedbackCard({
         lastSpokenMessageRef.current = response.coaching_message;
       }
     });
-  }, [audioEnabled, coachVoice, feedbackLanguage, response]);
+  }, [audioEnabled, autoSpeakEnabled, coachVoice, feedbackLanguage, response]);
 
   async function handlePlayCoachingAudio() {
     if (!response) {

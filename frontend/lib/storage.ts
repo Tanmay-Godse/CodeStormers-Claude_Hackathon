@@ -33,6 +33,7 @@ const SESSIONS_KEY = "ai-clinical-skills-coach:sessions";
 const AUTH_USER_KEY = "ai-clinical-skills-coach:auth-user";
 const KNOWLEDGE_PROGRESS_PREFIX = "ai-clinical-skills-coach:knowledge-progress";
 const WORKSPACE_USER_CHANGE_EVENT = "workspace-user-change";
+const KNOWLEDGE_HISTORY_LIMIT = 48;
 
 let activeLearningStateSyncKey: string | null = null;
 let activeLearningStateSyncPromise: Promise<LearningStateSnapshot | null> | null =
@@ -100,6 +101,8 @@ export function createDefaultKnowledgeProgress(): KnowledgeProgress {
     perfectRounds: 0,
     rapidfireBestStreak: 0,
     totalPoints: 0,
+    recentQuestionPrompts: [],
+    recentFlashcardFronts: [],
   };
 }
 
@@ -234,6 +237,26 @@ function validatePassword(password: string): string {
   return password;
 }
 
+function normalizeKnowledgeHistoryList(value: unknown): string[] {
+  if (!Array.isArray(value)) {
+    return [];
+  }
+
+  const normalized: string[] = [];
+  for (const item of value) {
+    if (typeof item !== "string") {
+      continue;
+    }
+    const cleaned = item.trim();
+    if (!cleaned || normalized.includes(cleaned)) {
+      continue;
+    }
+    normalized.push(cleaned);
+  }
+
+  return normalized.slice(-KNOWLEDGE_HISTORY_LIMIT);
+}
+
 function readKnowledgeProgress(ownerUsername: string): KnowledgeProgress {
   if (typeof window === "undefined") {
     return createDefaultKnowledgeProgress();
@@ -267,6 +290,12 @@ function readKnowledgeProgress(ownerUsername: string): KnowledgeProgress {
           : 0,
       totalPoints:
         typeof parsed.totalPoints === "number" ? parsed.totalPoints : 0,
+      recentQuestionPrompts: normalizeKnowledgeHistoryList(
+        parsed.recentQuestionPrompts,
+      ),
+      recentFlashcardFronts: normalizeKnowledgeHistoryList(
+        parsed.recentFlashcardFronts,
+      ),
     };
   } catch {
     return createDefaultKnowledgeProgress();
@@ -354,6 +383,14 @@ function mergeKnowledgeProgress(
       remoteProgress.rapidfireBestStreak,
     ),
     totalPoints: Math.max(localProgress.totalPoints, remoteProgress.totalPoints),
+    recentQuestionPrompts: normalizeKnowledgeHistoryList([
+      ...remoteProgress.recentQuestionPrompts,
+      ...localProgress.recentQuestionPrompts,
+    ]),
+    recentFlashcardFronts: normalizeKnowledgeHistoryList([
+      ...remoteProgress.recentFlashcardFronts,
+      ...localProgress.recentFlashcardFronts,
+    ]),
   };
 }
 

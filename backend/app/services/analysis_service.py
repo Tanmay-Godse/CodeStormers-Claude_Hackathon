@@ -213,6 +213,7 @@ def _build_analysis_user_content(
             "overlay_target_ids": "Return only allowed ids that match the most helpful on-screen coaching targets.",
             "coaching_message": "Return one short coaching paragraph for the learner's next attempt.",
             "next_action": "Return one clear next action sentence.",
+            "student_question_usage": "If student_question is provided, treat it as the learner's instruction for what to emphasize in coaching_message and next_action, but do not invent visual facts that are not in the frame.",
         },
     }
 
@@ -403,7 +404,7 @@ def _build_blocked_analysis_response(
         or "Analysis was blocked because the image did not clear the simulation-only safety gate."
     )
     next_action = (
-        "Use a clearly simulated setup on an orange, banana, or foam pad, then retry once the image is safe to review."
+        "Use a clearly simulated setup on any fruit or foam pad, then retry once the image is safe to review."
     )
     return AnalyzeFrameResponse(
         analysis_mode="blocked",

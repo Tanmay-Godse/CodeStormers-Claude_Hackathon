@@ -170,13 +170,16 @@ def _build_coach_system_prompt() -> str:
     return (
         "You are a respectful AI voice coach for a simulation-only suturing trainer. "
         "Speak directly to the learner in a calm, supportive tone. "
-        "The coach should feel attentive and specific, not generic. "
+        "The coach should feel like a skilled person standing beside the learner, attentive and specific, not generic. "
         "Avoid canned encouragement and avoid repeating the same setup script on every turn. "
         "If the latest turn already came from the assistant and there is no newer learner message, "
         "assume you are waiting for the learner rather than delivering another lecture. "
         "Do not restate the same correction verbatim on consecutive turns. "
         "If you need to speak again, give one brief check-in, one follow-up question, or one fresh cue. "
         "Use the current stage objective and visible checks to make the coaching turn concrete. "
+        "When the learner has just spoken, answer that exact remark first in a natural sentence, then give one immediate next cue for the current stage. "
+        "If a live frame is available, ground the reply in what the learner should show next in that frame so the exchange feels real-time. "
+        "Do not sound like a report, debrief, or checklist reader. "
         "If coach_mode is hands_free_startup, greet the learner briefly, mention the current stage by name, "
         "and tell them exactly what to show or stabilize next. "
         "If coach_mode is hands_free_observing, do not ask broad planning questions. Give one or two short, stage-specific cues grounded in the current frame. "
@@ -202,6 +205,7 @@ def _build_coach_user_content(
     include_image: bool,
 ) -> list[dict[str, Any]]:
     practice_surface = (payload.practice_surface or procedure.practice_surface).strip()
+    learner_focus = (payload.learner_focus or "").strip()
     conversation = [
         {"role": message.role, "content": message.content.strip()}
         for message in payload.messages
@@ -225,6 +229,7 @@ def _build_coach_user_content(
     )
     latest_turn_role = conversation[-1]["role"] if conversation else ""
     coach_mode = _determine_coach_mode(payload)
+    latest_user_is_question = _looks_like_direct_question(latest_user_message)
     context = {
         "procedure_title": procedure.title,
         "practice_surface": practice_surface,
@@ -243,20 +248,24 @@ def _build_coach_user_content(
         "student_name": payload.student_name or "",
         "simulation_confirmation": payload.simulation_confirmation,
         "equity_mode": payload.equity_mode.model_dump(mode="json"),
+        "learner_focus": learner_focus,
         "conversation_history": conversation,
         "latest_turn_role": latest_turn_role,
         "latest_user_message": latest_user_message,
+        "latest_user_is_question": latest_user_is_question,
         "latest_assistant_message": latest_assistant_message,
         "awaiting_new_learner_turn": bool(
             conversation and latest_turn_role == "assistant"
         ),
         "response_rules": {
             "coach_message": "2 to 4 short sentences that can be spoken aloud naturally.",
+            "coach_message_flow": "If latest_user_message is present, acknowledge or answer it in the first sentence, then give one concrete stage cue for the next rep.",
             "plan_summary": "1 short summary sentence of the agreed learning plan.",
             "suggested_next_step": "1 clear next action for the learner right now.",
             "camera_observations": "0 to 3 short observations grounded in the visible frame.",
             "stage_focus": "1 to 3 short focus points for the current stage.",
             "learner_goal_summary": "A short phrase capturing the learner's stated goal from text or audio, or an empty string if still unclear.",
+            "learner_focus_usage": "If learner_focus is provided, treat it as the learner's standing instruction unless a newer learner message overrides it.",
         },
     }
 
@@ -305,10 +314,17 @@ def _build_fallback_response(
     stage: ProcedureStage,
 ) -> CoachChatResponse:
     learner_name = (payload.student_name or "there").strip()
+    learner_focus = (payload.learner_focus or "").strip()
     last_user_message = next(
-        (message.content.strip() for message in reversed(payload.messages) if message.role == "user"),
+        (
+            message.content.strip()
+            for message in reversed(payload.messages)
+            if message.role == "user"
+        ),
         "",
     )
+    latest_user_is_question = _looks_like_direct_question(last_user_message)
+    effective_learner_goal = last_user_message or learner_focus
     last_assistant_message = next(
         (
             message.content.strip()
@@ -317,8 +333,19 @@ def _build_fallback_response(
         ),
         "",
     )
+    primary_focus = stage.visible_checks[0] if stage.visible_checks else stage.objective
+    secondary_focus = (
+        stage.visible_checks[1]
+        if len(stage.visible_checks) > 1
+        else stage.objective
+    )
+    goal_summary = _summarize_learner_goal(
+        learner_focus=learner_focus,
+        last_user_message=last_user_message,
+        stage=stage,
+    )
 
-    if payload.audio_base64 and not last_user_message:
+    if payload.audio_base64 and not effective_learner_goal:
         return CoachChatResponse(
             conversation_stage="goal_setting",
             coach_message=(
@@ -334,60 +361,56 @@ def _build_fallback_response(
             learner_goal_summary="",
         )
 
-    if not last_user_message and last_assistant_message:
-        first_check = stage.visible_checks[0] if stage.visible_checks else stage.objective
+    if not effective_learner_goal and last_assistant_message:
         return CoachChatResponse(
             conversation_stage="guiding",
             coach_message=(
                 f"I am still with you on the {stage.title.lower()} stage, {learner_name}. "
-                f"Show {_normalize_focus_text(first_check)} again when you are ready, or ask one short question."
+                f"Show {_normalize_focus_text(primary_focus)} again when you are ready, or ask one short question."
             ),
             plan_summary=(
                 f"Stay with the {stage.title.lower()} stage and wait for the learner's next move."
             ),
             suggested_next_step=(
-                f"Keep the field steady and clearly show {_normalize_focus_text(first_check)} for the next cue."
+                f"Keep the field steady and clearly show {_normalize_focus_text(primary_focus)} for the next cue."
             ),
             camera_observations=[],
             stage_focus=_clean_lines(stage.visible_checks)[:3] or [stage.title, stage.objective],
             learner_goal_summary="",
         )
 
-    if payload.image_base64 and not last_user_message:
-        first_check = stage.visible_checks[0] if stage.visible_checks else stage.objective
-        second_check = stage.visible_checks[1] if len(stage.visible_checks) > 1 else stage.title
+    if payload.image_base64 and not effective_learner_goal:
         return CoachChatResponse(
             conversation_stage="guiding",
             coach_message=(
                 f"Camera is live, {learner_name}. We are in the {stage.title.lower()} stage. "
-                f"Keep the frame steady and show {_normalize_focus_text(first_check)}. "
-                f"Next, make {_normalize_focus_text(second_check)} easy to see so I can guide the stage hands-free."
+                f"Keep the frame steady and show {_normalize_focus_text(primary_focus)}. "
+                f"Next, make {_normalize_focus_text(secondary_focus)} easy to see so I can guide the stage hands-free."
             ),
             plan_summary=(
                 f"Hands-free focus: stabilize the {stage.title.lower()} stage and make the key visual checks easy to inspect."
             ),
             suggested_next_step=(
-                f"Hold the field steady and clearly show {_normalize_focus_text(first_check)} in the camera view."
+                f"Hold the field steady and clearly show {_normalize_focus_text(primary_focus)} in the camera view."
             ),
             camera_observations=[],
             stage_focus=_clean_lines(stage.visible_checks)[:3] or [stage.title, stage.objective],
             learner_goal_summary="",
         )
 
-    if not last_user_message:
-        first_check = stage.visible_checks[0] if stage.visible_checks else stage.title
+    if not effective_learner_goal:
         return CoachChatResponse(
             conversation_stage="goal_setting",
             coach_message=(
                 f"Camera is live, {learner_name}. We are starting with the {stage.title.lower()} stage. "
                 "I will guide this stage hands-free. "
-                f"Confirm the simulation setup, then show {_normalize_focus_text(first_check)} so I can coach the next cue in real time."
+                f"Confirm the simulation setup, then show {_normalize_focus_text(primary_focus)} so I can coach the next cue in real time."
             ),
             plan_summary=(
                 f"Start by confirming the simulation setup, then we will coach the {stage.title.lower()} stage using the live camera view."
             ),
             suggested_next_step=(
-                f"Confirm the simulation surface, then position the camera so I can inspect {_normalize_focus_text(first_check)}."
+                f"Confirm the simulation surface, then position the camera so I can inspect {_normalize_focus_text(primary_focus)}."
             ),
             camera_observations=[],
             stage_focus=_clean_lines(stage.visible_checks)[:3] or [stage.title, stage.objective],
@@ -398,28 +421,57 @@ def _build_fallback_response(
         return CoachChatResponse(
             conversation_stage="planning",
             coach_message=(
-                f"Thanks for sharing that you want to focus on {last_user_message}. "
+                f"Thanks for sharing that you want to focus on {effective_learner_goal}. "
                 f"We can build the session around the {stage.title.lower()} stage. "
                 "Confirm the simulation-only setup when you are ready, and then I will guide the next step."
             ),
             plan_summary=(
-                f"Focus on {last_user_message} while using the {stage.title.lower()} stage as the starting checkpoint."
+                f"Focus on {effective_learner_goal} while using the {stage.title.lower()} stage as the starting checkpoint."
             ),
             suggested_next_step="Confirm the simulation setup, then capture a clear frame so I can guide the stage with you.",
             camera_observations=[],
             stage_focus=[stage.title, stage.objective],
-            learner_goal_summary=last_user_message,
+            learner_goal_summary=goal_summary,
+            learner_transcript=last_user_message,
+        )
+
+    if last_user_message:
+        opening = "Good question." if latest_user_is_question else "I heard you."
+        frame_cue = (
+            f"I can see the live frame, so show {_normalize_focus_text(primary_focus)} and keep {_normalize_focus_text(secondary_focus)} steady on the next rep."
+            if payload.image_base64
+            else f"On the next rep, show {_normalize_focus_text(primary_focus)} clearly and keep {_normalize_focus_text(secondary_focus)} steady."
+        )
+        return CoachChatResponse(
+            conversation_stage="guiding",
+            coach_message=(
+                f"{opening} For {stage.title.lower()}, focus on {_normalize_focus_text(primary_focus)} first. "
+                f"{frame_cue} I will adjust the next cue with you in real time."
+            ),
+            plan_summary=(
+                f"Live goal: {goal_summary or stage.title}. Guide the learner through the {stage.title.lower()} stage one visible cue at a time."
+            ),
+            suggested_next_step=(
+                f"Make one controlled rep and clearly show {_normalize_focus_text(primary_focus)} in the frame."
+            ),
+            camera_observations=(
+                ["A live frame is available for real-time coaching."]
+                if payload.image_base64
+                else []
+            ),
+            stage_focus=_clean_lines(stage.visible_checks)[:3] or [stage.title, stage.objective],
+            learner_goal_summary=goal_summary,
             learner_transcript=last_user_message,
         )
 
     return CoachChatResponse(
         conversation_stage="guiding",
         coach_message=(
-            f"Thanks. We will focus on {last_user_message}. "
+            f"Thanks. We will focus on {goal_summary or effective_learner_goal}. "
             f"Start by keeping {payload.practice_surface or procedure.practice_surface} steady and visible for the {stage.title.lower()} stage. "
-            "Once the frame is clear, check the step and I will help refine the next attempt."
+            "Once the frame is clear, check the step and I will guide the next attempt in real time."
         ),
-        plan_summary=f"Practice goal: {last_user_message}. Start with the {stage.title.lower()} stage.",
+        plan_summary=f"Practice goal: {goal_summary or effective_learner_goal}. Start with the {stage.title.lower()} stage.",
         suggested_next_step=(
             f"Center {payload.practice_surface or procedure.practice_surface}, prepare for {stage.title.lower()}, and capture the next frame."
         ),
@@ -429,7 +481,7 @@ def _build_fallback_response(
             else []
         ),
         stage_focus=[stage.title, stage.objective],
-        learner_goal_summary=last_user_message,
+        learner_goal_summary=goal_summary,
         learner_transcript=last_user_message,
     )
 
@@ -445,7 +497,7 @@ def _to_safety_payload(payload: CoachChatRequest) -> AnalyzeFrameRequest:
         skill_level=payload.skill_level,
         practice_surface=payload.practice_surface,
         image_base64=payload.image_base64 or "missing-frame",
-        student_question=last_user_message or None,
+        student_question=last_user_message or (payload.learner_focus or "").strip() or None,
         simulation_confirmation=payload.simulation_confirmation,
         session_id=payload.session_id,
         student_name=payload.student_name,
@@ -461,6 +513,8 @@ def _clean_lines(lines: list[str]) -> list[str]:
         if candidate and candidate not in cleaned:
             cleaned.append(candidate)
     return cleaned
+
+
 def _determine_coach_mode(payload: CoachChatRequest) -> str:
     if payload.image_base64 and not payload.messages:
         return "hands_free_observing"
@@ -476,3 +530,51 @@ def _normalize_focus_text(text: str) -> str:
     if normalized and not normalized.startswith(("the ", "a ", "an ")):
         normalized = f"the {normalized}"
     return normalized
+
+
+def _looks_like_direct_question(text: str) -> bool:
+    candidate = text.strip().lower()
+    if not candidate:
+        return False
+
+    if candidate.endswith("?"):
+        return True
+
+    question_prefixes = (
+        "what ",
+        "why ",
+        "how ",
+        "when ",
+        "where ",
+        "which ",
+        "who ",
+        "is ",
+        "are ",
+        "am ",
+        "do ",
+        "does ",
+        "did ",
+        "can ",
+        "could ",
+        "should ",
+        "would ",
+        "will ",
+        "have ",
+        "has ",
+    )
+    return candidate.startswith(question_prefixes)
+
+
+def _summarize_learner_goal(
+    *,
+    learner_focus: str,
+    last_user_message: str,
+    stage: ProcedureStage,
+) -> str:
+    if learner_focus:
+        return learner_focus
+    if not last_user_message:
+        return ""
+    if _looks_like_direct_question(last_user_message):
+        return f"{stage.title} guidance"
+    return last_user_message

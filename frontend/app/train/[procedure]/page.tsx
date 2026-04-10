@@ -616,6 +616,7 @@ export default function TrainProcedurePage() {
   );
   const [isSessionPaused, setIsSessionPaused] = useState(false);
   const [isLiveSessionActive, setIsLiveSessionActive] = useState(false);
+  const [setupCameraVerified, setSetupCameraVerified] = useState(false);
   const activeVoiceCaptureRef = useRef<VoiceCaptureController | null>(null);
   const browserMicDiagnosticControllerRef =
     useRef<BrowserSpeechRecognitionController | null>(null);
@@ -1410,7 +1411,8 @@ export default function TrainProcedurePage() {
     const nextMicrophonePermissionState =
       overrides?.microphonePermissionState ?? microphonePermissionState;
     const nextIsOnline = overrides?.isOnline ?? isOnline;
-    const nextCameraVerified = overrides?.cameraVerified ?? cameraReady;
+    const nextCameraVerified =
+      (overrides?.cameraVerified ?? cameraReady) || setupCameraVerified;
     const backendReachable = nextBackendHealth?.status === "ok";
     const transcriptionUsesOpenAI = Boolean(
       nextBackendHealth?.transcription_api_base_url
@@ -1493,8 +1495,10 @@ export default function TrainProcedurePage() {
         id: "camera",
         label: "Camera",
         status: "pass",
-        summary: "Camera is live",
-        detail: "The live preview is active and ready for setup and step analysis.",
+        summary: cameraReady ? "Camera is live" : "Camera verified",
+        detail: cameraReady
+          ? "The live preview is active and ready for setup and step analysis."
+          : "The local setup check already verified camera access. Start the camera again when you are ready for live training.",
       });
     } else {
       checks.push({
@@ -1690,6 +1694,7 @@ export default function TrainProcedurePage() {
     liveSessionQuotaLabel,
     mediaCaptureSupported,
     microphonePermissionState,
+    setupCameraVerified,
     setupHealthError,
     backendMicDiagnostic,
   ]);
@@ -2050,7 +2055,7 @@ export default function TrainProcedurePage() {
     : cameraReady && isSetupStage
       ? "Finish the local setup check first. The counted live session will begin when real training starts."
     : cameraReady
-      ? `Hackathon demo timer: ${formatDurationClock(
+      ? `Demo timer: ${formatDurationClock(
           demoTimeRemainingMs,
         )} remaining. Coach voice is live.`
       : "Start the camera to begin this guided practice block.";
@@ -2519,6 +2524,7 @@ export default function TrainProcedurePage() {
     setFrozenFrameUrl(null);
     setStudentQuestion("");
     setSimulationConfirmed(true);
+    setSetupCameraVerified(false);
     pausedDemoTimeRemainingRef.current = null;
     resumePausedSessionRef.current = false;
     cameraStopModeRef.current = "idle";
@@ -2665,19 +2671,30 @@ export default function TrainProcedurePage() {
         let cameraVerified = cameraRef.current?.hasLiveStream() ?? false;
 
         const getRemainingSetupBudgetMs = () =>
-          Math.max(
-            500,
-            SETUP_LOCAL_CHECK_TIMEOUT_MS -
-              Math.round(performance.now() - setupStartedAt),
-          );
+          SETUP_LOCAL_CHECK_TIMEOUT_MS -
+          Math.round(performance.now() - setupStartedAt);
+
+        const requireRemainingSetupBudgetMs = (message: string) => {
+          const remainingBudgetMs = getRemainingSetupBudgetMs();
+          if (remainingBudgetMs <= 0) {
+            throw new Error(message);
+          }
+          return remainingBudgetMs;
+        };
 
         if (!cameraVerified && mediaCaptureSupported) {
           await withTimeout(
             cameraRef.current?.startCamera() ?? Promise.resolve(),
-            getRemainingSetupBudgetMs(),
+            requireRemainingSetupBudgetMs(
+              "Setup checks must finish within 5 seconds. Please run Check My Step again.",
+            ),
             "Camera permission took too long. Please allow camera access and run Check My Step again.",
           );
           cameraVerified = cameraRef.current?.hasLiveStream() ?? false;
+        }
+
+        if (cameraVerified) {
+          setSetupCameraVerified(true);
         }
 
         if (
@@ -2686,15 +2703,19 @@ export default function TrainProcedurePage() {
         ) {
           await withTimeout(
             primeVoiceRecordingPermission(),
-            getRemainingSetupBudgetMs(),
+            requireRemainingSetupBudgetMs(
+              "Setup checks must finish within 5 seconds. Please run Check My Step again.",
+            ),
             "Microphone permission took too long. Please allow microphone access and run Check My Step again.",
           );
         }
 
         const setupSnapshot = await withTimeout(
           refreshSetupChecks(),
-          getRemainingSetupBudgetMs(),
-          "Setup checks took too long. Please try again.",
+          requireRemainingSetupBudgetMs(
+            "Setup checks must finish within 5 seconds. Please run Check My Step again.",
+          ),
+          "Setup checks must finish within 5 seconds. Please run Check My Step again.",
         );
 
         const response = buildLocalSetupFeedback({
@@ -2751,7 +2772,6 @@ export default function TrainProcedurePage() {
           const nextStageId = findNextStageId(procedure, currentStage.id);
           if (nextStageId) {
             setCurrentStageId(nextStageId);
-            setStudentQuestion("");
             setActiveWorkspacePanel("checklist");
           }
         }
@@ -2873,7 +2893,6 @@ export default function TrainProcedurePage() {
         const nextStageId = findNextStageId(procedure, currentStage.id);
         if (nextStageId) {
           setCurrentStageId(nextStageId);
-          setStudentQuestion("");
           setActiveWorkspacePanel("checklist");
         }
       }
@@ -2934,7 +2953,6 @@ export default function TrainProcedurePage() {
 
     if (nextStageId) {
       setCurrentStageId(nextStageId);
-      setStudentQuestion("");
       setActiveWorkspacePanel("checklist");
     }
   }
@@ -2990,6 +3008,7 @@ export default function TrainProcedurePage() {
         stage_id: currentStage.id,
         skill_level: skillLevel,
         practice_surface: practiceSurface,
+        learner_focus: studentQuestion.trim() || undefined,
         feedback_language: equityMode.feedbackLanguage,
         simulation_confirmation: simulationConfirmed,
         image_base64: capturedFrame?.base64,
@@ -3018,6 +3037,7 @@ export default function TrainProcedurePage() {
     cameraReady,
     currentStage,
     equityMode,
+    studentQuestion,
     practiceSurface,
     procedure,
     session,
@@ -3309,7 +3329,7 @@ export default function TrainProcedurePage() {
 
         const learnerResponse = await requestCoachTurn({
           audioClip: learnerTranscript ? null : learnerClip,
-          includeImage: false,
+          includeImage: true,
           learnerMessage: learnerTranscript,
           messages: coachMessagesRef.current.slice(-COACH_CONVERSATION_WINDOW),
         });
@@ -3337,6 +3357,7 @@ export default function TrainProcedurePage() {
             learnerMessage,
           );
         }
+        const learnerTurnWasCaptured = Boolean(learnerTranscript || learnerClip);
         const coachSignature = buildCoachMessageSignature(
           learnerResponse.coach_message,
         );
@@ -3346,12 +3367,14 @@ export default function TrainProcedurePage() {
           Boolean(lastCoachMessage) &&
           lastCoachMessage?.signature === coachSignature &&
           Date.now() - lastCoachMessage.at < VOICE_DUPLICATE_GUIDANCE_COOLDOWN_MS;
+        const shouldSuppressCoachReply =
+          isDuplicateGuidance && !learnerTurnWasCaptured;
 
-        if (!isDuplicateGuidance) {
+        if (!shouldSuppressCoachReply) {
           appendCoachMessage("assistant", learnerResponse.coach_message);
         }
         setVoiceSessionStatus("speaking");
-        if (!isDuplicateGuidance) {
+        if (!shouldSuppressCoachReply) {
           const didSpeakCoachTurn = await speakTextAndWait(
             learnerResponse.coach_message,
             equityMode.feedbackLanguage,
@@ -3428,6 +3451,7 @@ export default function TrainProcedurePage() {
       <FeedbackCard
         attemptCount={currentStageAttempts}
         audioEnabled={equityMode.audioCoaching}
+        autoSpeakEnabled={!voiceChatEnabled}
         coachVoice={equityMode.coachVoice}
         error={analyzeError}
         feedbackLanguage={equityMode.feedbackLanguage}
