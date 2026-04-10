@@ -7,8 +7,9 @@ This guide is for collaborators working on a public repo while the demo is live.
 Safe to document publicly:
 
 - the four judge student accounts shown on `/login`
-- the shared student password `CODESTORMERS`
+- the shared student password `Qwerty@123`
 - the fact that each public student account has `10` live sessions
+- the current `2-minute` live camera window for the hackathon demo
 - the public routes and demo flow
 
 Keep private:
@@ -18,6 +19,7 @@ Keep private:
 - real Anthropic and OpenAI keys
 - any backend database copied from a live environment
 - any private `PRIVATE_SEED_ACCOUNTS_JSON` payload
+- local-only notes such as `docs/static-accounts-local.md` and `docs/demo-speaker-notes.md`
 
 Do not publish private account credentials in docs, screenshots, issue
 comments, or commits.
@@ -67,6 +69,7 @@ Before pushing:
 
 - keep `backend/.env` and `frontend/.env.local` out of Git
 - keep `backend/app/data/auth.db` and `backend/app/data/review_cases.json` out of Git
+- keep local-only notes ignored and uncommitted unless you intentionally want to share them
 - do not paste private credentials into docs or source files
 - review `git status --short` before committing
 
@@ -80,8 +83,10 @@ git status --short
 
 ## Team Workflow
 
-- pull and rebase before large edits on `main`
+- do not push directly to `main`; use `development` or a feature branch and merge intentionally
+- pull and sync before large edits on the shared branch you are using
 - treat `docs/local-setup.md` as the canonical local-development guide
+- treat `docs/how-to-run.md` as the canonical demo smoke-flow guide
 - treat `docs/vercel-deployment.md` and `docs/backend-deployment.md` as deployment ownership docs
 - prefer updating one canonical doc and linking to it, rather than duplicating the same instructions across several files
 
@@ -90,10 +95,12 @@ git status --short
 1. Open `/login`.
 2. Sign in with one judge account.
 3. Confirm `/dashboard`, `/knowledge`, and `/library` load.
-4. Start a live session and confirm the backend receives analysis calls.
-5. Confirm live-session quota updates after the camera run starts.
-6. Open the generated review.
-7. If using admin or developer accounts, confirm review queue and approval pages still load.
+4. Open `/train/simple-interrupted-suture`.
+5. In `Setup`, confirm the preflight checks load and `Check Audio` can report Browser STT and backend transcription results.
+6. Start a live session and confirm the backend receives analysis calls after `Check My Step`.
+7. Confirm live-session quota updates after the camera run starts.
+8. Open the generated review.
+9. If using admin or developer accounts, confirm review queue and approval pages still load.
 
 ## Deployment Pointers
 

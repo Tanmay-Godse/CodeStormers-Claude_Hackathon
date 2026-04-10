@@ -17,6 +17,10 @@ It assumes you are starting from the repo root.
 - `micromamba` with the `hackathon` environment available
 - a browser with camera and microphone support
 
+The commands below use `micromamba run -n hackathon` so the backend always uses
+the intended Python environment. If you already ran `micromamba activate
+hackathon`, the same commands also work without that prefix.
+
 ## 1. Start The Backend
 
 ```bash
@@ -95,7 +99,7 @@ Seeded public student demo accounts:
 - `student_2@gmail.com`
 - `student_3@gmail.com`
 - `student_4@gmail.com`
-- shared password: `CODESTORMERS`
+- shared password: `Qwerty@123`
 
 Public demo behavior:
 
@@ -106,21 +110,49 @@ Public demo behavior:
 - the live-session allowance is consumed when a camera run starts
 - only admin or developer accounts can reset seeded-account limits
 
-## 4. Run The Main Smoke Flow
+## 4. Understand The Trainer Setup Flow
+
+Before you run a graded step, the live trainer now separates setup,
+audio-diagnostic, and image-analysis actions:
+
+- `Setup` tab:
+  checks backend/API reachability, AI readiness, secure browser context, camera
+  and mic permission state, browser speech-to-text availability, backend
+  transcription readiness, network state, and live-session quota state.
+- `Check Audio`:
+  runs an audio-only diagnostic. It does not send a camera frame and does not
+  consume image-analysis calls.
+- `Check Audio` speech path:
+  tries Browser STT first. If backend transcription is ready, it also captures
+  one backend comparison sample and shows both result cards in the footer.
+- `Check My Step`:
+  runs frame analysis for the current stage. Setup no longer auto-passes just
+  because the camera starts.
+- session controls:
+  `Pause Session` keeps the current run state and remaining time, while
+  `End Session` closes the current run cleanly.
+- coach speech:
+  the trainer tries browser speech playback first and falls back to backend TTS
+  when browser playback does not actually start.
+
+## 5. Run The Main Smoke Flow
 
 1. Sign in from `/login`.
 2. Open `/dashboard`.
 3. Open `/train/simple-interrupted-suture`.
-4. Start the camera.
-5. Allow camera and microphone permissions if the browser asks.
-6. Let setup pass on a clearly visible simulated surface such as an orange, banana, or foam pad.
-7. Use `Check My Step` for grading and coaching.
-8. Confirm the trainer shows the current stage, voice-coach status, and the `2-minute` demo timer.
-9. Open the generated review from the session flow.
-10. Visit `/knowledge` and `/library` to confirm the supporting surfaces load.
-11. Refresh `/dashboard` or `/review/[sessionId]` and confirm the session history rehydrates from the backend.
+4. Stay on the `Setup` tab and confirm the preflight checks load.
+5. Run `Check Audio`, speak one short sentence, and confirm the footer shows Browser STT plus Backend Transcribe results when backend transcription is configured.
+6. Start the camera.
+7. Allow camera and microphone permissions if the browser asks.
+8. Frame a clearly visible simulated surface such as an orange, banana, or foam pad.
+9. Use `Check My Step` to grade the setup stage.
+10. Confirm the trainer shows the current stage, voice-coach status, and the `2-minute` session timer.
+11. Optionally test `Pause Session` and `End Session` so the live controls are confirmed before a demo.
+12. Open the generated review from the session flow.
+13. Visit `/knowledge` and `/library` to confirm the supporting surfaces load.
+14. Refresh `/dashboard` or `/review/[sessionId]` and confirm the session history rehydrates from the backend.
 
-## 5. Quick Checks
+## 6. Quick Checks
 
 Backend:
 
@@ -153,7 +185,7 @@ Run that only if you intentionally want to clear local accounts, session
 history, Knowledge Lab progress, and persisted review cases before restarting
 the backend.
 
-## Common Issues
+## 7. Common Issues
 
 - Account creation works but admin login is denied:
   that account is still pending developer approval, so sign in through the
@@ -168,7 +200,13 @@ the backend.
 - OpenAI-backed analysis fails as soon as the live preview starts:
   `AI_API_BASE_URL`, `AI_API_KEY`, or the selected OpenAI main model is wrong.
 - Learner voice is not transcribed:
-  the backend `TRANSCRIPTION_API_KEY` is missing, placeholder-only, revoked, or wrong.
+  browser STT may be unavailable in that browser, or the backend
+  `TRANSCRIPTION_API_KEY` is missing, placeholder-only, revoked, or wrong. Use
+  the trainer `Setup` tab and `Check Audio` to see which speech path is active.
+- `Check Audio` shows both browser and backend result cards:
+  that is expected when backend transcription is configured. The shortcut now
+  compares both paths in one run so you can see transcript and timing side by
+  side.
 - The live session starts but stops quickly:
   each camera run is intentionally capped at `2 minutes` in the current demo build.
 - Uvicorn reload fails with a watchfiles permission error:
@@ -179,9 +217,10 @@ the backend.
 - Deployed frontend cannot call the backend:
   `FRONTEND_ORIGIN` does not match the exact frontend origin allowed by the backend.
 - Camera or microphone does not start:
-  use `localhost` or `https`, and confirm browser permissions.
+  use `localhost` or `https`, confirm browser permissions, and refresh the
+  trainer if the tab was already open before permissions changed.
 
-## Next Docs
+## 8. Next Docs
 
 - [local-setup.md](local-setup.md)
 - [cloud-keys.md](cloud-keys.md)

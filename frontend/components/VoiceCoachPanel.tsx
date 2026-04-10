@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo } from "react";
+import { useEffect, useMemo, useState } from "react";
 
 import {
   COACH_VOICE_OPTIONS,
@@ -51,6 +51,11 @@ export function VoiceCoachPanel({
 }: VoiceCoachPanelProps) {
   const supportsSpeechSynthesis = useMemo(() => canUseSpeechSynthesis(), []);
   const supportsVoiceRecording = useMemo(() => canUseVoiceRecording(), []);
+  const [isTestingVoice, setIsTestingVoice] = useState(false);
+  const [voiceTestNotice, setVoiceTestNotice] = useState<{
+    tone: "status-pass" | "status-retry" | "status-unsafe";
+    text: string;
+  } | null>(null);
 
   useEffect(() => {
     return () => {
@@ -59,12 +64,35 @@ export function VoiceCoachPanel({
   }, []);
 
   async function handleTestVoice() {
+    setIsTestingVoice(true);
+    setVoiceTestNotice(null);
     primeSpeechPlayback();
-    await speakText(
+    const didSpeak = await speakText(
       "Coach voice check. If you hear this, spoken guidance is working.",
       feedbackLanguage,
       coachVoice,
     );
+    setIsTestingVoice(false);
+    setVoiceTestNotice(
+      didSpeak
+        ? {
+            tone: "status-pass",
+            text: "Voice playback started. If audio is still silent, check browser tab sound and system output.",
+          }
+        : {
+            tone: "status-unsafe",
+            text: "Voice playback did not start. Check browser/site audio permissions or try another coach voice.",
+          },
+    );
+  }
+
+  function handleStopVoice() {
+    stopSpeechPlayback();
+    setIsTestingVoice(false);
+    setVoiceTestNotice({
+      tone: "status-retry",
+      text: "Voice playback stopped.",
+    });
   }
 
   return (
@@ -101,7 +129,7 @@ export function VoiceCoachPanel({
           <p className="panel-copy" style={{ marginTop: 10 }}>
             {voiceChatEnabled
               ? "Coach replies play automatically and the mic reopens after each turn."
-              : "The audio loop starts as soon as the camera is live."}
+              : "The audio loop waits until setup is confirmed and live coaching begins."}
           </p>
         </article>
       </div>
@@ -126,10 +154,14 @@ export function VoiceCoachPanel({
         <article className="metric-card compact-metric-card">
           <p className="metric-label">Audio path</p>
           <p className="metric-value">
-            {supportsSpeechSynthesis ? "browser voice" : "backend voice"}
+            {supportsSpeechSynthesis ? "adaptive voice" : "backend voice"}
           </p>
           <p className="panel-copy" style={{ marginTop: 10 }}>
-            {supportsVoiceRecording ? "Mic ready for replies." : "Mic input is unavailable in this browser."}
+            {supportsSpeechSynthesis
+              ? "Uses a matching browser female voice when available, otherwise falls back to backend voice synthesis."
+              : supportsVoiceRecording
+                ? "Mic ready for replies."
+                : "Mic input is unavailable in this browser."}
           </p>
         </article>
       </div>
@@ -190,17 +222,35 @@ export function VoiceCoachPanel({
         </div>
       ) : null}
 
+      {voiceTestNotice ? (
+        <div className="feedback-block" style={{ marginTop: 16 }}>
+          <div className="feedback-header">
+            <strong>Voice playback</strong>
+            <span className={`status-badge ${voiceTestNotice.tone}`}>
+              {voiceTestNotice.tone === "status-pass"
+                ? "ready"
+                : voiceTestNotice.tone === "status-retry"
+                  ? "stopped"
+                  : "attention"}
+            </span>
+          </div>
+          <p className="feedback-copy" style={{ marginTop: 12 }}>
+            {voiceTestNotice.text}
+          </p>
+        </div>
+      ) : null}
+
       <div className="button-row" style={{ marginTop: 16 }}>
         <button
           className="button-secondary"
           onClick={() => void handleTestVoice()}
           type="button"
         >
-          Test Voice
+          {isTestingVoice ? "Testing Voice..." : "Test Voice"}
         </button>
         <button
           className="button-ghost"
-          onClick={stopSpeechPlayback}
+          onClick={handleStopVoice}
           type="button"
         >
           Stop Voice

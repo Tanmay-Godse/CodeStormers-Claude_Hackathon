@@ -97,13 +97,18 @@ curl https://your-backend.example.com/api/v1/health
 curl https://your-backend.example.com/api/v1/procedures/simple-interrupted-suture
 ```
 
+The `/health` response should show `ai_ready=true` and, if backend speech
+fallback is configured, `transcription_ready=true`.
+
 Manual checks:
 
 1. Sign in from the deployed frontend.
-2. Start a live session.
-3. Confirm the backend writes quota and learning-state files under the persistent data mount.
-4. Refresh the browser and confirm the session history rehydrates.
-5. Confirm review cases still exist after a backend restart.
+2. Open the trainer `Setup` tab and confirm the preflight checks load.
+3. Run `Check Audio` and confirm backend transcription can be measured when configured.
+4. Start a live session.
+5. Confirm the backend writes quota and learning-state files under the persistent data mount.
+6. Refresh the browser and confirm the session history rehydrates.
+7. Confirm review cases still exist after a backend restart.
 
 ## Common Failure Modes
 

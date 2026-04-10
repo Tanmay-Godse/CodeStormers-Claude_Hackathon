@@ -8,6 +8,7 @@ export type ReviewCaseStatus = "pending" | "resolved";
 export type AuthMode = "sign-in" | "create-account";
 export type FeedbackLanguage = "en" | "es" | "fr" | "hi";
 export type CoachVoicePreset =
+  | "guide_male"
   | "guide_female"
   | "mentor_female"
   | "system_default";
@@ -111,6 +112,25 @@ export type KnowledgePackResponse = {
 export type HealthStatus = {
   status: string;
   simulation_only: boolean;
+  ai_provider: string;
+  ai_ready: boolean;
+  ai_coach_model: string;
+  transcription_ready: boolean;
+  transcription_model: string;
+  transcription_api_base_url: string;
+};
+
+export type TranscriptionTestRequest = {
+  audio_base64: string;
+  audio_format: "wav" | "mp3";
+};
+
+export type TranscriptionTestResponse = {
+  transcript: string;
+  latency_ms: number;
+  transcription_model: string;
+  transcription_api_base_url: string;
+  transcription_provider: string;
 };
 
 export type CoachChatMessage = {

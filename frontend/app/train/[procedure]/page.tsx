@@ -21,21 +21,37 @@ import {
   DEFAULT_TRAINING_HREF,
 } from "@/lib/appShell";
 import {
+  startBrowserSpeechCapture,
+  canUseBrowserSpeechRecognition,
+  canUseVoiceRecording,
+  primeVoiceRecordingPermission,
+  speakText,
   speakTextAndWait,
-  startVoiceRecording,
   stopSpeechPlayback,
+  startVoiceCapture,
+  startVoiceRecording,
+  type BrowserSpeechRecognitionController,
+  type VoiceCaptureController,
   type RecordedVoiceClip,
   type VoiceRecordingController,
 } from "@/lib/audio";
 import { toApiEquityMode } from "@/lib/equity";
-import { analyzeFrame, coachChat, getProcedure } from "@/lib/api";
+import {
+  analyzeFrame,
+  coachChat,
+  getHealthStatus,
+  getProcedure,
+  testTranscription,
+} from "@/lib/api";
 import { createDefaultCalibration } from "@/lib/geometry";
 import {
   clearAuthUser,
   consumeAuthLiveSession,
+  createSession,
   createDefaultEquityMode,
   getAuthUser,
   getOrCreateActiveSession,
+  refreshAuthUser,
   saveSession,
   startFreshSession,
   syncLearningStateFromBackend,
@@ -47,11 +63,13 @@ import type {
   CoachChatMessage,
   CoachChatResponse,
   EquityModeSettings,
+  HealthStatus,
   OfflinePracticeLog,
   ProcedureDefinition,
   SessionEvent,
   SessionRecord,
   SkillLevel,
+  TranscriptionTestResponse,
 } from "@/lib/types";
 
 const AUTO_COACH_INTERVAL_MS = 1_000;
@@ -67,6 +85,11 @@ const VOICE_PROACTIVE_REPROMPT_DELAY_MS = 500;
 const VOICE_PROACTIVE_REPROMPT_AFTER_SILENT_WINDOWS = 3;
 const VOICE_MIN_GAP_BETWEEN_PROACTIVE_TURNS_MS = 12_000;
 const VOICE_DUPLICATE_GUIDANCE_COOLDOWN_MS = 20_000;
+const BROWSER_AUDIO_CHECK_EARLY_EXIT_MS = 1_500;
+const COACH_AUDIO_PLAYBACK_ERROR =
+  "Coach guidance is available in text, but spoken playback did not start. Open the Coach tab and use Test Voice, or check browser/site audio output.";
+const SETUP_VOICE_PROMPT =
+  "Setup check is live. Center the practice field, then press Check My Step when the frame looks ready.";
 
 type VoiceSessionStatus =
   | "idle"
@@ -88,12 +111,152 @@ type LiveShellIconProps = {
   className?: string;
 };
 
+type SetupCheckStatus = "pass" | "retry" | "unsafe";
+
+type SetupCheck = {
+  detail: string;
+  id: string;
+  label: string;
+  status: SetupCheckStatus;
+  summary: string;
+};
+
+type BrowserPermissionState = PermissionState | "unsupported" | "unknown";
+
+type BrowserPermissionsNavigator = Navigator & {
+  permissions?: {
+    query: (permission: { name: string }) => Promise<{ state: PermissionState }>;
+  };
+};
+
+type MicDiagnosticPhase =
+  | "idle"
+  | "browser-listening"
+  | "backend-recording"
+  | "backend-transcribing";
+
+type MicDiagnosticPath = "browser" | "backend";
+
+type MicDiagnosticResult = {
+  checkedAt: string | null;
+  clipDurationMs: number | null;
+  detail: string | null;
+  error: string | null;
+  latencyMs: number | null;
+  processingMs: number | null;
+  roundTripMs: number | null;
+  transcript: string;
+};
+
+type AudioShortcutSection = {
+  id: MicDiagnosticPath;
+  meta: string[];
+  statusLabel: string;
+  summary: string;
+  title: string;
+  tone: string;
+  transcript: string;
+};
+
+const EMPTY_MIC_DIAGNOSTIC_RESULT: MicDiagnosticResult = {
+  checkedAt: null,
+  clipDurationMs: null,
+  detail: null,
+  error: null,
+  latencyMs: null,
+  processingMs: null,
+  roundTripMs: null,
+  transcript: "",
+};
+
 function buildCoachMessageSignature(message: string): string {
   return message
     .toLowerCase()
     .replace(/[^a-z0-9\s]/g, " ")
     .replace(/\s+/g, " ")
     .trim();
+}
+
+function getSetupCheckTone(status: SetupCheckStatus): string {
+  switch (status) {
+    case "pass":
+      return "status-pass";
+    case "retry":
+      return "status-retry";
+    case "unsafe":
+      return "status-unsafe";
+    default:
+      return "";
+  }
+}
+
+function formatLatency(ms: number | null): string | null {
+  if (ms === null) {
+    return null;
+  }
+
+  if (ms < 1000) {
+    return `${Math.round(ms)} ms`;
+  }
+
+  return `${(ms / 1000).toFixed(1)} s`;
+}
+
+function formatCheckedAtLabel(checkedAt: string | null): string | null {
+  if (!checkedAt) {
+    return null;
+  }
+
+  return `Checked ${new Date(checkedAt).toLocaleTimeString([], {
+    hour: "numeric",
+    minute: "2-digit",
+  })}`;
+}
+
+function hasMicDiagnosticTranscript(result: MicDiagnosticResult | null): boolean {
+  return Boolean(result?.transcript.trim());
+}
+
+function getTranscriptionProviderLabel(
+  apiBaseUrl: string | null | undefined,
+): string {
+  const normalized = apiBaseUrl?.trim().toLowerCase() ?? "";
+  if (normalized.includes("api.openai.com")) {
+    return "OpenAI API";
+  }
+  if (normalized) {
+    return "Custom transcription API";
+  }
+  return "Backend transcription";
+}
+
+function buildBackendDiagnosticDetail(
+  response: TranscriptionTestResponse,
+  clipDurationMs: number,
+): string {
+  return `${response.transcription_provider} returned a transcript using '${response.transcription_model}'. Clip length ${formatLatency(
+    clipDurationMs,
+  ) ?? "short"}.`;
+}
+
+async function readMediaPermissionState(
+  name: "camera" | "microphone",
+): Promise<BrowserPermissionState> {
+  if (typeof navigator === "undefined") {
+    return "unknown";
+  }
+
+  const permissionsNavigator = navigator as BrowserPermissionsNavigator;
+  if (!permissionsNavigator.permissions?.query) {
+    return "unsupported";
+  }
+
+  try {
+    const permissionStatus = await permissionsNavigator.permissions.query({ name });
+    return permissionStatus.state;
+  } catch {
+    return "unsupported";
+  }
 }
 
 function ChecklistIcon({ className }: LiveShellIconProps) {
@@ -226,6 +389,49 @@ function getVoiceStatusHeadline(status: VoiceSessionStatus, cameraReady: boolean
   }
 }
 
+function getLiveStatusChip(options: {
+  audioCoachingEnabled: boolean;
+  cameraReady: boolean;
+  demoSessionExpired: boolean;
+  isSessionPaused: boolean;
+  isSetupStage: boolean;
+  voiceSessionStatus: VoiceSessionStatus;
+}): { label: string; tone: string } {
+  if (options.demoSessionExpired) {
+    return { label: "Ended", tone: "status-unsafe" };
+  }
+
+  if (options.isSessionPaused) {
+    return { label: "Paused", tone: "status-retry" };
+  }
+
+  if (!options.cameraReady || options.isSetupStage) {
+    return { label: "Setup", tone: "status-retry" };
+  }
+
+  if (!options.audioCoachingEnabled) {
+    return { label: "Manual", tone: "status-pass" };
+  }
+
+  switch (options.voiceSessionStatus) {
+    case "starting":
+      return { label: "Booting", tone: "status-retry" };
+    case "watching":
+      return { label: "Watching", tone: "status-pass" };
+    case "speaking":
+      return { label: "Coaching", tone: "status-pass" };
+    case "listening":
+      return { label: "Listening", tone: "status-pass" };
+    case "thinking":
+      return { label: "Analyzing", tone: "status-retry" };
+    case "paused":
+      return { label: "Paused", tone: "status-retry" };
+    case "idle":
+    default:
+      return { label: "Live", tone: "status-pass" };
+  }
+}
+
 function formatDurationClock(durationMs: number): string {
   const totalSeconds = Math.max(0, Math.ceil(durationMs / 1000));
   const minutes = Math.floor(totalSeconds / 60);
@@ -345,6 +551,22 @@ export default function TrainProcedurePage() {
   const [studentQuestion, setStudentQuestion] = useState("");
   const [simulationConfirmed, setSimulationConfirmed] = useState(true);
   const [isOnline, setIsOnline] = useState(true);
+  const [backendHealth, setBackendHealth] = useState<HealthStatus | null>(null);
+  const [setupHealthError, setSetupHealthError] = useState<string | null>(null);
+  const [cameraPermissionState, setCameraPermissionState] =
+    useState<BrowserPermissionState>("unknown");
+  const [microphonePermissionState, setMicrophonePermissionState] =
+    useState<BrowserPermissionState>("unknown");
+  const [isRefreshingSetupChecks, setIsRefreshingSetupChecks] = useState(false);
+  const [setupChecksUpdatedAt, setSetupChecksUpdatedAt] = useState<string | null>(
+    null,
+  );
+  const [micDiagnosticPhase, setMicDiagnosticPhase] =
+    useState<MicDiagnosticPhase>("idle");
+  const [browserMicDiagnostic, setBrowserMicDiagnostic] =
+    useState<MicDiagnosticResult>({ ...EMPTY_MIC_DIAGNOSTIC_RESULT });
+  const [backendMicDiagnostic, setBackendMicDiagnostic] =
+    useState<MicDiagnosticResult>({ ...EMPTY_MIC_DIAGNOSTIC_RESULT });
   const [voiceSessionStatus, setVoiceSessionStatus] =
     useState<VoiceSessionStatus>("idle");
   const [liveSessionAccessError, setLiveSessionAccessError] = useState<string | null>(
@@ -354,19 +576,36 @@ export default function TrainProcedurePage() {
   const [demoTimeRemainingMs, setDemoTimeRemainingMs] = useState(
     DEMO_CAMERA_SESSION_LIMIT_MS,
   );
-  const activeVoiceRecordingRef = useRef<VoiceRecordingController | null>(null);
+  const [isSessionPaused, setIsSessionPaused] = useState(false);
+  const activeVoiceCaptureRef = useRef<VoiceCaptureController | null>(null);
+  const browserMicDiagnosticControllerRef =
+    useRef<BrowserSpeechRecognitionController | null>(null);
+  const backendMicDiagnosticControllerRef =
+    useRef<VoiceRecordingController | null>(null);
+  const micDiagnosticRunIdRef = useRef(0);
+  const audioShortcutStopRequestedRef = useRef(false);
   const coachMessagesRef = useRef<CoachChatMessage[]>([]);
   const voiceLoopGenerationRef = useRef(0);
   const demoDeadlineRef = useRef<number | null>(null);
   const demoSessionExpiredRef = useRef(false);
+  const pausedDemoTimeRemainingRef = useRef<number | null>(null);
+  const resumePausedSessionRef = useRef(false);
+  const cameraStopModeRef = useRef<"idle" | "pause" | "end">("idle");
+  const hasSpokenSetupPromptRef = useRef(false);
   const liveCaptureProfileRef = useRef<string | null>(null);
-  const autoSetupAnalysisAttemptedRef = useRef(false);
   const lastCoachMessageRef = useRef<{
     at: number;
     conversationStage: CoachChatResponse["conversation_stage"];
     signature: string;
   } | null>(null);
   const lastCoachTurnAtRef = useRef<number | null>(null);
+  const isSecureBrowserContext =
+    typeof window !== "undefined" && window.isSecureContext;
+  const mediaCaptureSupported =
+    typeof navigator !== "undefined" &&
+    Boolean(navigator.mediaDevices?.getUserMedia);
+  const browserSpeechRecognitionAvailable = canUseBrowserSpeechRecognition();
+  const browserVoiceRecordingAvailable = canUseVoiceRecording();
 
   useEffect(() => {
     if (typeof window === "undefined") {
@@ -385,29 +624,533 @@ export default function TrainProcedurePage() {
     };
   }, []);
 
+  const refreshSetupChecks = useCallback(async () => {
+    setIsRefreshingSetupChecks(true);
+
+    try {
+      const [nextCameraPermission, nextMicrophonePermission, nextHealth] =
+        await Promise.all([
+          readMediaPermissionState("camera"),
+          readMediaPermissionState("microphone"),
+          getHealthStatus().catch((error) => {
+            throw new Error(
+              error instanceof Error
+                ? error.message
+                : "The backend health check could not be reached.",
+            );
+          }),
+        ]);
+
+      setCameraPermissionState(nextCameraPermission);
+      setMicrophonePermissionState(nextMicrophonePermission);
+      setBackendHealth(nextHealth);
+      setSetupHealthError(null);
+      setSetupChecksUpdatedAt(new Date().toISOString());
+    } catch (error) {
+      setSetupHealthError(
+        error instanceof Error
+          ? error.message
+          : "The backend health check could not be reached.",
+      );
+      setBackendHealth(null);
+      setSetupChecksUpdatedAt(new Date().toISOString());
+    } finally {
+      setIsRefreshingSetupChecks(false);
+    }
+  }, []);
+
+  const cancelMicDiagnostics = useCallback(async () => {
+    micDiagnosticRunIdRef.current += 1;
+
+    const activeBrowserController = browserMicDiagnosticControllerRef.current;
+    const activeBackendController = backendMicDiagnosticControllerRef.current;
+    browserMicDiagnosticControllerRef.current = null;
+    backendMicDiagnosticControllerRef.current = null;
+    setMicDiagnosticPhase("idle");
+
+    await Promise.allSettled(
+      [
+        activeBrowserController?.cancel(),
+        activeBackendController?.cancel(),
+      ].filter((task): task is Promise<void> => Boolean(task)),
+    );
+  }, []);
+
+  const handleBrowserMicDiagnostic = useCallback(
+    async (): Promise<MicDiagnosticResult | null> => {
+    if (micDiagnosticPhase === "browser-listening") {
+      void browserMicDiagnosticControllerRef.current?.stop();
+      return null;
+    }
+
+    if (!browserSpeechRecognitionAvailable) {
+      const unavailableResult = {
+        ...EMPTY_MIC_DIAGNOSTIC_RESULT,
+        checkedAt: new Date().toISOString(),
+        error:
+          "Browser speech-to-text is not available here, so the live trainer will need the backend transcription path instead.",
+      };
+      setBrowserMicDiagnostic(unavailableResult);
+      return unavailableResult;
+    }
+
+    await cancelMicDiagnostics();
+
+    const runId = micDiagnosticRunIdRef.current + 1;
+    micDiagnosticRunIdRef.current = runId;
+    setMicDiagnosticPhase("browser-listening");
+    setBrowserMicDiagnostic({
+      ...EMPTY_MIC_DIAGNOSTIC_RESULT,
+      checkedAt: new Date().toISOString(),
+      detail:
+        "Listening locally. Say one short sentence and wait for the browser transcript.",
+    });
+
+    try {
+      const startedAt = performance.now();
+      if (browserVoiceRecordingAvailable) {
+        await primeVoiceRecordingPermission();
+      }
+      const controller = await startBrowserSpeechCapture({
+        language: equityMode.feedbackLanguage,
+        maxDurationMs: VOICE_RECORDING_MAX_DURATION_MS,
+      });
+
+      if (!controller) {
+        throw new Error("Browser speech-to-text is not available in this browser.");
+      }
+
+      browserMicDiagnosticControllerRef.current = controller;
+      const result = await controller.result;
+
+      if (micDiagnosticRunIdRef.current !== runId) {
+        return null;
+      }
+
+      browserMicDiagnosticControllerRef.current = null;
+      setMicDiagnosticPhase("idle");
+      const transcript = result?.transcript.trim() ?? "";
+      const totalListenMs = Math.max(
+        0,
+        Math.round(performance.now() - startedAt),
+      );
+      const shouldFallback =
+        !transcript &&
+        (totalListenMs <= BROWSER_AUDIO_CHECK_EARLY_EXIT_MS ||
+          Boolean(result?.errorMessage));
+      const estimatedProcessingMs = transcript
+        ? Math.max(120, Math.round(totalListenMs * 0.18))
+        : null;
+
+      const nextResult = {
+        ...EMPTY_MIC_DIAGNOSTIC_RESULT,
+        checkedAt: new Date().toISOString(),
+        clipDurationMs: totalListenMs,
+        detail: transcript
+          ? "Browser speech-to-text completed locally without a backend call."
+          : shouldFallback
+            ? "Browser speech-to-text ended before it produced a usable transcript."
+            : "The browser finished listening but did not return a transcript.",
+        error:
+          transcript.length > 0
+            ? null
+            : result?.errorMessage ??
+              "No browser transcript was detected from that sample.",
+        latencyMs: estimatedProcessingMs,
+        processingMs: estimatedProcessingMs,
+        roundTripMs: totalListenMs,
+        transcript,
+      };
+      setBrowserMicDiagnostic(nextResult);
+      void refreshSetupChecks();
+      return nextResult;
+    } catch (error) {
+      if (micDiagnosticRunIdRef.current !== runId) {
+        return null;
+      }
+
+      browserMicDiagnosticControllerRef.current = null;
+      setMicDiagnosticPhase("idle");
+      const failedResult = {
+        ...EMPTY_MIC_DIAGNOSTIC_RESULT,
+        checkedAt: new Date().toISOString(),
+        error:
+          error instanceof Error
+            ? error.message
+            : "Browser speech-to-text could not start.",
+      };
+      setBrowserMicDiagnostic(failedResult);
+      void refreshSetupChecks();
+      return failedResult;
+    }
+  }, [
+    browserSpeechRecognitionAvailable,
+    browserVoiceRecordingAvailable,
+    cancelMicDiagnostics,
+    equityMode.feedbackLanguage,
+    micDiagnosticPhase,
+    refreshSetupChecks,
+  ]);
+
+  const handleBackendMicDiagnostic = useCallback(async (): Promise<MicDiagnosticResult | null> => {
+    if (micDiagnosticPhase === "backend-recording") {
+      void backendMicDiagnosticControllerRef.current?.stop();
+      return null;
+    }
+
+    if (!browserVoiceRecordingAvailable) {
+      const unavailableResult = {
+        ...EMPTY_MIC_DIAGNOSTIC_RESULT,
+        checkedAt: new Date().toISOString(),
+        error:
+          "Microphone recording is not available in this browser, so the backend transcription path cannot be tested here.",
+      };
+      setBackendMicDiagnostic(unavailableResult);
+      return unavailableResult;
+    }
+
+    if (!backendHealth?.transcription_ready) {
+      const unavailableResult = {
+        ...EMPTY_MIC_DIAGNOSTIC_RESULT,
+        checkedAt: new Date().toISOString(),
+        error:
+          "Backend transcription is not configured yet, so there is no API voice-to-text path to measure.",
+      };
+      setBackendMicDiagnostic(unavailableResult);
+      return unavailableResult;
+    }
+
+    await cancelMicDiagnostics();
+
+    const runId = micDiagnosticRunIdRef.current + 1;
+    micDiagnosticRunIdRef.current = runId;
+    setMicDiagnosticPhase("backend-recording");
+    setBackendMicDiagnostic({
+      ...EMPTY_MIC_DIAGNOSTIC_RESULT,
+      checkedAt: new Date().toISOString(),
+      detail:
+        "Recording a short mic sample for backend transcription. Speak one short sentence.",
+    });
+
+    try {
+      const controller = await startVoiceRecording({
+        maxDurationMs: VOICE_RECORDING_MAX_DURATION_MS,
+        minSpeechDurationMs: VOICE_RECORDING_MIN_SPEECH_MS,
+        silenceDurationMs: VOICE_RECORDING_SILENCE_DURATION_MS,
+      });
+
+      if (!controller) {
+        throw new Error("Microphone recording could not start in this browser.");
+      }
+
+      backendMicDiagnosticControllerRef.current = controller;
+      const audioClip = await controller.result;
+
+      if (micDiagnosticRunIdRef.current !== runId) {
+        return null;
+      }
+
+      backendMicDiagnosticControllerRef.current = null;
+
+      if (!audioClip) {
+        setMicDiagnosticPhase("idle");
+        const emptyClipResult = {
+          ...EMPTY_MIC_DIAGNOSTIC_RESULT,
+          checkedAt: new Date().toISOString(),
+          error:
+            "No usable speech sample was captured. Try again and speak a little closer to the microphone.",
+        };
+        setBackendMicDiagnostic(emptyClipResult);
+        void refreshSetupChecks();
+        return emptyClipResult;
+      }
+
+      setMicDiagnosticPhase("backend-transcribing");
+      setBackendMicDiagnostic({
+        ...EMPTY_MIC_DIAGNOSTIC_RESULT,
+        checkedAt: new Date().toISOString(),
+        clipDurationMs: audioClip.durationMs,
+        detail: `Recorded ${formatLatency(audioClip.durationMs) ?? "a short"} clip. Sending it to ${getTranscriptionProviderLabel(
+          backendHealth.transcription_api_base_url,
+        )}.`,
+      });
+
+      const requestStartedAt = performance.now();
+      const transcriptionResponse = await testTranscription({
+        audio_base64: audioClip.base64,
+        audio_format: audioClip.format,
+      });
+
+      if (micDiagnosticRunIdRef.current !== runId) {
+        return null;
+      }
+
+      setMicDiagnosticPhase("idle");
+      const nextResult = {
+        ...EMPTY_MIC_DIAGNOSTIC_RESULT,
+        checkedAt: new Date().toISOString(),
+        clipDurationMs: audioClip.durationMs,
+        detail: buildBackendDiagnosticDetail(
+          transcriptionResponse,
+          audioClip.durationMs,
+        ),
+        error: null,
+        latencyMs: transcriptionResponse.latency_ms,
+        roundTripMs: Math.max(
+          0,
+          Math.round(performance.now() - requestStartedAt),
+        ),
+        transcript: transcriptionResponse.transcript,
+      };
+      setBackendMicDiagnostic(nextResult);
+      void refreshSetupChecks();
+      return nextResult;
+    } catch (error) {
+      if (micDiagnosticRunIdRef.current !== runId) {
+        return null;
+      }
+
+      backendMicDiagnosticControllerRef.current = null;
+      setMicDiagnosticPhase("idle");
+      const failedResult = {
+        ...EMPTY_MIC_DIAGNOSTIC_RESULT,
+        checkedAt: new Date().toISOString(),
+        error:
+          error instanceof Error
+            ? error.message
+            : "Backend transcription testing could not start.",
+      };
+      setBackendMicDiagnostic(failedResult);
+      void refreshSetupChecks();
+      return failedResult;
+    }
+  }, [
+    backendHealth,
+    browserVoiceRecordingAvailable,
+    cancelMicDiagnostics,
+    micDiagnosticPhase,
+    refreshSetupChecks,
+  ]);
+
+  const handleCheckAudioShortcut = useCallback(async () => {
+    if (activeWorkspacePanel !== "setup") {
+      setActiveWorkspacePanel("setup");
+    }
+
+    if (micDiagnosticPhase !== "idle") {
+      return;
+    }
+
+    audioShortcutStopRequestedRef.current = false;
+
+    const shouldRunBrowser = browserSpeechRecognitionAvailable;
+    const shouldRunBackend =
+      Boolean(backendHealth?.transcription_ready) && browserVoiceRecordingAvailable;
+
+    let browserResult: MicDiagnosticResult | null = null;
+    if (shouldRunBrowser) {
+      browserResult = await handleBrowserMicDiagnostic();
+    } else if (!browserSpeechRecognitionAvailable) {
+      browserResult = await handleBrowserMicDiagnostic();
+    }
+
+    if (shouldRunBrowser && browserResult === null) {
+      setBrowserMicDiagnostic((current) =>
+        hasMicDiagnosticTranscript(current) || current.error
+          ? current
+          : {
+              ...EMPTY_MIC_DIAGNOSTIC_RESULT,
+              checkedAt: new Date().toISOString(),
+              error:
+                "Browser speech-to-text did not finish. Run Check Audio again or use Test Browser STT below.",
+              },
+      );
+      return;
+    }
+
+    if (audioShortcutStopRequestedRef.current) {
+      audioShortcutStopRequestedRef.current = false;
+      return;
+    }
+
+    if (shouldRunBackend) {
+      const backendResult = await handleBackendMicDiagnostic();
+
+      if (backendResult === null) {
+        setBackendMicDiagnostic((current) =>
+          hasMicDiagnosticTranscript(current) || current.error
+              ? current
+            : {
+                ...EMPTY_MIC_DIAGNOSTIC_RESULT,
+                checkedAt: new Date().toISOString(),
+                error: `${getTranscriptionProviderLabel(
+                  backendHealth?.transcription_api_base_url,
+                )} did not finish. Run Check Audio again or use Test Backend STT below.`,
+              },
+        );
+      }
+    } else if (
+      !browserSpeechRecognitionAvailable &&
+      !backendHealth?.transcription_ready
+    ) {
+      await handleBackendMicDiagnostic();
+    }
+  }, [
+    activeWorkspacePanel,
+    backendHealth?.transcription_api_base_url,
+    backendHealth?.transcription_ready,
+    browserSpeechRecognitionAvailable,
+    browserVoiceRecordingAvailable,
+    handleBackendMicDiagnostic,
+    handleBrowserMicDiagnostic,
+    micDiagnosticPhase,
+  ]);
+
+  const handleStopAudioShortcut = useCallback(async () => {
+    audioShortcutStopRequestedRef.current = true;
+
+    if (micDiagnosticPhase === "browser-listening") {
+      const controller = browserMicDiagnosticControllerRef.current;
+
+      if (controller) {
+        await controller.stop();
+      } else {
+        await cancelMicDiagnostics();
+        setBrowserMicDiagnostic((current) =>
+          hasMicDiagnosticTranscript(current) || current.error
+            ? current
+            : {
+                ...EMPTY_MIC_DIAGNOSTIC_RESULT,
+                checkedAt: new Date().toISOString(),
+                error:
+                  "Browser speech-to-text was stopped before it returned a transcript.",
+              },
+        );
+      }
+      return;
+    }
+
+    if (micDiagnosticPhase === "backend-recording") {
+      await cancelMicDiagnostics();
+      setBackendMicDiagnostic((current) =>
+        hasMicDiagnosticTranscript(current) || current.error
+          ? current
+          : {
+              ...EMPTY_MIC_DIAGNOSTIC_RESULT,
+              checkedAt: new Date().toISOString(),
+              error:
+                "Backend audio check was stopped before transcription could begin.",
+            },
+      );
+    }
+  }, [cancelMicDiagnostics, micDiagnosticPhase]);
+
   useEffect(() => {
     const nextUser = getAuthUser();
+    let cancelled = false;
 
     if (!nextUser) {
       const nextPath = procedureId
         ? `/train/${procedureId}`
         : "/train/simple-interrupted-suture";
       router.replace(`/login?role=student&next=${encodeURIComponent(nextPath)}`);
-      return;
+      return () => {
+        cancelled = true;
+      };
     }
 
     setAuthUser(nextUser);
     setIsAuthLoading(false);
+
+    void refreshAuthUser()
+      .then((refreshedUser) => {
+        if (cancelled) {
+          return;
+        }
+
+        if (!refreshedUser) {
+          const nextPath = procedureId
+            ? `/train/${procedureId}`
+            : "/train/simple-interrupted-suture";
+          router.replace(`/login?role=student&next=${encodeURIComponent(nextPath)}`);
+          return;
+        }
+
+        setAuthUser(refreshedUser);
+      })
+      .catch(() => {
+        if (!cancelled) {
+          setAuthUser(nextUser);
+        }
+      });
+
+    return () => {
+      cancelled = true;
+    };
   }, [procedureId, router]);
 
   useEffect(() => {
-    const activeProcedureId = procedureId;
-    const currentUser = authUser;
-
-    if (!currentUser) {
+    if (!authUser?.sessionToken) {
       return;
     }
-    const currentUsername = currentUser.username;
+
+    let cancelled = false;
+
+    const syncAuthQuota = () => {
+      void refreshAuthUser()
+        .then((refreshedUser) => {
+          if (!cancelled && refreshedUser) {
+            setAuthUser(refreshedUser);
+          }
+        })
+        .catch(() => undefined);
+    };
+
+    const handleVisibilityChange = () => {
+      if (document.visibilityState === "visible") {
+        syncAuthQuota();
+      }
+    };
+
+    window.addEventListener("focus", syncAuthQuota);
+    document.addEventListener("visibilitychange", handleVisibilityChange);
+
+    return () => {
+      cancelled = true;
+      window.removeEventListener("focus", syncAuthQuota);
+      document.removeEventListener("visibilitychange", handleVisibilityChange);
+    };
+  }, [authUser?.accountId, authUser?.sessionToken]);
+
+  useEffect(() => {
+    if (activeWorkspacePanel !== "setup" || micDiagnosticPhase !== "idle") {
+      return;
+    }
+
+    void refreshSetupChecks();
+  }, [
+    activeWorkspacePanel,
+    cameraReady,
+    cameraStatus.state,
+    coachError,
+    isOnline,
+    micDiagnosticPhase,
+    refreshSetupChecks,
+  ]);
+
+  useEffect(() => {
+    return () => {
+      void cancelMicDiagnostics();
+    };
+  }, [cancelMicDiagnostics]);
+
+  useEffect(() => {
+    const activeProcedureId = procedureId;
+    const currentUsername = authUser?.username;
+
+    if (!currentUsername) {
+      return;
+    }
 
     if (!activeProcedureId) {
       setProcedureError("No procedure id was provided in the route.");
@@ -440,6 +1183,29 @@ export default function TrainProcedurePage() {
           "beginner",
           currentUsername,
         );
+        if (
+          activeSession.events.length > 0 ||
+          activeSession.offlinePracticeLogs.length > 0 ||
+          Boolean(activeSession.debrief)
+        ) {
+          // Keep historical attempts for review, but open the live trainer on a
+          // clean run so the hackathon demo always starts at setup.
+          activeSession = saveSession({
+            ...createSession(
+              nextProcedure.id,
+              activeSession.skillLevel,
+              currentUsername,
+            ),
+            practiceSurface:
+              activeSession.practiceSurface ?? nextProcedure.practice_surface,
+            equityMode: activeSession.equityMode,
+            simulationConfirmed: true,
+            learnerFocus: "",
+            updatedAt: new Date().toISOString(),
+          }, {
+            makeActive: true,
+          });
+        }
         if (!activeSession.ownerUsername) {
           activeSession = saveSession({
             ...activeSession,
@@ -478,7 +1244,7 @@ export default function TrainProcedurePage() {
     return () => {
       cancelled = true;
     };
-  }, [authUser, procedureId]);
+  }, [authUser?.username, procedureId]);
 
   const currentStage = useMemo(
     () => procedure?.stages.find((stage) => stage.id === currentStageId) ?? null,
@@ -509,6 +1275,14 @@ export default function TrainProcedurePage() {
     feedback?.grading_decision === "graded" &&
     procedure &&
     !findNextStageId(procedure, currentStageId);
+  const canCheckCurrentStep = Boolean(
+    currentStage &&
+      !isAnalyzing &&
+      simulationConfirmed &&
+      cameraStatus.state !== "requesting" &&
+      (cameraReady || currentStage.id === "setup"),
+  );
+  const isSetupStage = currentStage?.id === "setup";
   const latestLearnerGoal = useMemo(
     () =>
       [...coachMessages]
@@ -517,7 +1291,8 @@ export default function TrainProcedurePage() {
         ?.content.trim() ?? "",
     [coachMessages],
   );
-  const voiceChatEnabled = cameraReady && equityMode.audioCoaching;
+  const coachLoopEnabled = cameraReady && !isSetupStage;
+  const voiceChatEnabled = coachLoopEnabled && equityMode.audioCoaching;
   const captureProfileLabel = "Standard capture";
   const hasLiveSessionLimitReached = Boolean(
     authUser &&
@@ -526,6 +1301,8 @@ export default function TrainProcedurePage() {
   );
   const cameraToggleLabel = cameraReady
     ? "Stop Camera"
+    : isSessionPaused
+      ? "Resume Session"
     : hasLiveSessionLimitReached
       ? "Live Session Limit Reached"
     : cameraStatus.state === "requesting"
@@ -546,6 +1323,502 @@ export default function TrainProcedurePage() {
 
     return `${authUser.liveSessionRemaining ?? 0} of ${authUser.liveSessionLimit} live runs left`;
   }, [authUser]);
+  const setupChecks = useMemo<SetupCheck[]>(() => {
+    const checks: SetupCheck[] = [];
+    const backendReachable = backendHealth?.status === "ok";
+    const transcriptionUsesOpenAI = Boolean(
+      backendHealth?.transcription_api_base_url
+        ?.toLowerCase()
+        .includes("api.openai.com"),
+    );
+
+    checks.push(
+      backendReachable
+        ? {
+            id: "backend",
+            label: "Backend services",
+            status: backendHealth.ai_ready ? "pass" : "retry",
+            summary: backendHealth.ai_ready
+              ? "API and AI coach are reachable"
+              : "API reachable, but AI coach config needs attention",
+            detail: backendHealth.ai_ready
+              ? `Simulation-only mode is ${backendHealth.simulation_only ? "on" : "off"}. Coach provider '${backendHealth.ai_provider}' is configured with model '${backendHealth.ai_coach_model}'.`
+              : "The API responded, but the AI coach configuration is incomplete.",
+          }
+        : {
+            id: "backend",
+            label: "Backend services",
+            status: "unsafe",
+            summary: "Backend health check failed",
+            detail:
+              setupHealthError ??
+              "The trainer could not reach the backend health endpoint.",
+          },
+    );
+
+    if (!isSecureBrowserContext) {
+      checks.push({
+        id: "browser-security",
+        label: "Browser security",
+        status: "unsafe",
+        summary: "Secure context required",
+        detail:
+          "Camera and microphone access require HTTPS or localhost in this browser.",
+      });
+    } else {
+      checks.push({
+        id: "browser-security",
+        label: "Browser security",
+        status: "pass",
+        summary: "Secure browser context active",
+        detail: "This page can request protected camera and microphone access.",
+      });
+    }
+
+    if (!mediaCaptureSupported) {
+      checks.push({
+        id: "camera",
+        label: "Camera",
+        status: "unsafe",
+        summary: "Camera capture is not supported",
+        detail: "This browser does not expose getUserMedia for live video capture.",
+      });
+    } else if (
+      cameraStatus.state === "blocked" ||
+      cameraPermissionState === "denied"
+    ) {
+      checks.push({
+        id: "camera",
+        label: "Camera",
+        status: "unsafe",
+        summary: "Camera permission is blocked",
+        detail:
+          cameraStatus.message ??
+          "Allow camera access in the browser before starting live analysis.",
+      });
+    } else if (cameraReady) {
+      checks.push({
+        id: "camera",
+        label: "Camera",
+        status: "pass",
+        summary: "Camera is live",
+        detail: "The live preview is active and ready for setup and step analysis.",
+      });
+    } else {
+      checks.push({
+        id: "camera",
+        label: "Camera",
+        status: cameraStatus.state === "requesting" ? "retry" : "pass",
+        summary:
+          cameraStatus.state === "requesting"
+            ? "Waiting for camera permission"
+            : "Camera support detected",
+        detail:
+          cameraStatus.state === "requesting"
+            ? "The browser is still negotiating camera access."
+            : "The camera can be started from setup or when you press Check My Step.",
+      });
+    }
+
+    if (!browserVoiceRecordingAvailable) {
+      checks.push({
+        id: "microphone",
+        label: "Microphone",
+        status: "unsafe",
+        summary: "Microphone capture is unavailable",
+        detail:
+          "This browser cannot open microphone capture for live voice coaching.",
+      });
+    } else if (microphonePermissionState === "denied") {
+      checks.push({
+        id: "microphone",
+        label: "Microphone",
+        status: "unsafe",
+        summary: "Microphone permission is blocked",
+        detail:
+          "Allow microphone access so the voice coach can listen to learner replies.",
+      });
+    } else {
+      checks.push({
+        id: "microphone",
+        label: "Microphone",
+        status: "pass",
+        summary:
+          microphonePermissionState === "granted"
+            ? "Microphone is ready"
+            : "Microphone can be requested on demand",
+        detail:
+          microphonePermissionState === "granted"
+            ? "The browser already granted microphone access for voice coaching."
+            : "The trainer will request microphone access when voice capture is needed.",
+      });
+    }
+
+    if (!equityMode.audioCoaching) {
+      checks.push({
+        id: "speech-path",
+        label: "Speech path",
+        status: "retry",
+        summary: "Audio coaching is turned off",
+        detail: "Enable audio coaching if you want hands-free voice interaction.",
+      });
+    } else if (browserSpeechRecognitionAvailable) {
+      checks.push({
+        id: "speech-path",
+        label: "Speech path",
+        status: "pass",
+        summary: "Browser speech-to-text available",
+        detail:
+          "The live coach will try in-browser speech recognition first for faster learner replies.",
+      });
+    } else if (browserVoiceRecordingAvailable && backendHealth?.transcription_ready) {
+      checks.push({
+        id: "speech-path",
+        label: "Speech path",
+        status: "pass",
+        summary: transcriptionUsesOpenAI
+          ? "Backend OpenAI transcription fallback ready"
+          : "Backend transcription fallback ready",
+        detail: transcriptionUsesOpenAI
+          ? `Browser speech-to-text is unavailable, so learner replies will fall back to the backend OpenAI transcription service using '${backendHealth.transcription_model}'.`
+          : `Browser speech-to-text is unavailable, so learner replies will fall back to the backend transcription service using '${backendHealth.transcription_model}'.`,
+      });
+    } else {
+      checks.push({
+        id: "speech-path",
+        label: "Speech path",
+        status: "unsafe",
+        summary: "No speech path is ready",
+        detail:
+          "Browser speech-to-text is unavailable and the backend transcription fallback is not ready.",
+      });
+    }
+
+    checks.push(
+      isOnline
+        ? {
+            id: "network",
+            label: "Network",
+            status: "pass",
+            summary: "Online",
+            detail:
+              "Cloud analysis, coaching, and transcription services can be reached from this session.",
+          }
+        : {
+            id: "network",
+            label: "Network",
+            status: "retry",
+            summary: "Offline fallback only",
+            detail:
+              "Offline logging can continue, but cloud analysis and backend voice services will not respond until the network returns.",
+          },
+    );
+
+    checks.push(
+      hasLiveSessionLimitReached
+        ? {
+            id: "quota",
+            label: "Live-session quota",
+            status: "unsafe",
+            summary: "No live runs remaining",
+            detail:
+              liveSessionQuotaLabel ??
+              "This workspace account needs a live-session quota reset before another camera run.",
+          }
+        : {
+            id: "quota",
+            label: "Live-session quota",
+            status: "pass",
+            summary: liveSessionQuotaLabel ?? "Live-session access ready",
+            detail:
+              authUser?.liveSessionLimit === null
+                ? "This role uses uncapped live-session access."
+                : "A live-session allowance is available for the next camera run.",
+          },
+    );
+
+    return checks;
+  }, [
+    authUser,
+    backendHealth,
+    browserSpeechRecognitionAvailable,
+    browserVoiceRecordingAvailable,
+    cameraPermissionState,
+    cameraReady,
+    cameraStatus.message,
+    cameraStatus.state,
+    equityMode.audioCoaching,
+    hasLiveSessionLimitReached,
+    isOnline,
+    isSecureBrowserContext,
+    liveSessionQuotaLabel,
+    mediaCaptureSupported,
+    microphonePermissionState,
+    setupHealthError,
+  ]);
+  const setupSummaryTone = setupChecks.some((check) => check.status === "unsafe")
+    ? "status-unsafe"
+    : setupChecks.some((check) => check.status === "retry")
+      ? "status-retry"
+      : "status-pass";
+  const setupSummaryLabel = setupChecks.some((check) => check.status === "unsafe")
+    ? "attention needed"
+    : setupChecks.some((check) => check.status === "retry")
+      ? "ready with notes"
+      : "all systems ready";
+  const setupChecksUpdatedLabel = setupChecksUpdatedAt
+    ? new Date(setupChecksUpdatedAt).toLocaleTimeString([], {
+        hour: "numeric",
+        minute: "2-digit",
+      })
+    : null;
+  const browserMicDiagnosticUpdatedLabel = browserMicDiagnostic.checkedAt
+    ? new Date(browserMicDiagnostic.checkedAt).toLocaleTimeString([], {
+        hour: "numeric",
+        minute: "2-digit",
+      })
+    : null;
+  const backendMicDiagnosticUpdatedLabel = backendMicDiagnostic.checkedAt
+    ? new Date(backendMicDiagnostic.checkedAt).toLocaleTimeString([], {
+        hour: "numeric",
+        minute: "2-digit",
+      })
+    : null;
+  const transcriptionProviderLabel = getTranscriptionProviderLabel(
+    backendHealth?.transcription_api_base_url,
+  );
+  const micDiagnosticSummaryTone =
+    micDiagnosticPhase === "backend-transcribing" ||
+    micDiagnosticPhase === "backend-recording" ||
+    micDiagnosticPhase === "browser-listening"
+      ? "status-retry"
+      : browserMicDiagnostic.error || backendMicDiagnostic.error
+        ? "status-unsafe"
+        : "status-pass";
+  const micDiagnosticSummaryLabel =
+    micDiagnosticPhase === "browser-listening"
+      ? "browser test live"
+      : micDiagnosticPhase === "backend-recording"
+        ? "recording sample"
+        : micDiagnosticPhase === "backend-transcribing"
+          ? "measuring api latency"
+          : browserMicDiagnostic.error || backendMicDiagnostic.error
+            ? "needs attention"
+            : "ready to test";
+  const speechTestSummary =
+    browserSpeechRecognitionAvailable && backendHealth?.transcription_ready
+      ? `Browser speech-to-text is available. You can compare it with the ${transcriptionProviderLabel} fallback below.`
+      : browserSpeechRecognitionAvailable
+        ? "Browser speech-to-text is available, but the backend fallback is not configured yet."
+        : backendHealth?.transcription_ready
+          ? `Browser speech-to-text is unavailable here, so learner replies will rely on ${transcriptionProviderLabel}.`
+          : "Neither browser speech-to-text nor backend transcription is ready yet.";
+  const canRunBrowserMicDiagnostic =
+    micDiagnosticPhase === "idle" || micDiagnosticPhase === "browser-listening";
+  const canRunBackendMicDiagnostic =
+    micDiagnosticPhase === "idle" || micDiagnosticPhase === "backend-recording";
+  const browserMicDiagnosticButtonLabel =
+    micDiagnosticPhase === "browser-listening"
+      ? "Stop Browser Test"
+      : "Test Browser STT";
+  const backendMicDiagnosticButtonLabel =
+    micDiagnosticPhase === "backend-recording"
+      ? "Stop Backend Test"
+      : micDiagnosticPhase === "backend-transcribing"
+        ? "Transcribing..."
+        : "Test Backend STT";
+  const showCheckAudioShortcut = isSetupStage;
+  const showStopAudioShortcut =
+    showCheckAudioShortcut &&
+    (micDiagnosticPhase === "browser-listening" ||
+      micDiagnosticPhase === "backend-recording");
+  const checkAudioShortcutLabel =
+    micDiagnosticPhase === "idle" ? "Check Audio" : "Checking Audio...";
+  const isCheckAudioShortcutDisabled =
+    !showCheckAudioShortcut || micDiagnosticPhase !== "idle";
+  const audioShortcutInsight = useMemo(() => {
+    const browserHasTranscript = hasMicDiagnosticTranscript(browserMicDiagnostic);
+    const backendHasTranscript = hasMicDiagnosticTranscript(backendMicDiagnostic);
+    const browserCheckedLabel = formatCheckedAtLabel(browserMicDiagnostic.checkedAt);
+    const backendCheckedLabel = formatCheckedAtLabel(backendMicDiagnostic.checkedAt);
+    const browserReady = browserSpeechRecognitionAvailable;
+    const backendReady =
+      Boolean(backendHealth?.transcription_ready) && browserVoiceRecordingAvailable;
+    const preferredPath = browserHasTranscript
+      ? "browser"
+      : backendHasTranscript
+        ? "backend"
+        : browserReady
+          ? "browser"
+          : backendReady
+            ? "backend"
+            : null;
+
+    const browserSection: AudioShortcutSection = {
+      id: "browser",
+      meta: [
+        browserHasTranscript ? "Used for live replies" : null,
+        browserMicDiagnostic.latencyMs !== null
+          ? `Local latency ${formatLatency(browserMicDiagnostic.latencyMs)}`
+          : null,
+        browserMicDiagnostic.clipDurationMs !== null
+          ? `Listen window ${formatLatency(browserMicDiagnostic.clipDurationMs)}`
+          : null,
+        browserMicDiagnostic.processingMs !== null
+          ? `Processing ${formatLatency(browserMicDiagnostic.processingMs)}`
+          : null,
+        browserMicDiagnostic.roundTripMs !== null
+          ? `Local cycle ${formatLatency(browserMicDiagnostic.roundTripMs)}`
+          : null,
+        browserCheckedLabel,
+      ].filter((value): value is string => Boolean(value)),
+      statusLabel:
+        micDiagnosticPhase === "browser-listening"
+          ? "listening"
+          : browserMicDiagnostic.error
+            ? "issue"
+            : browserHasTranscript
+              ? "captured"
+              : browserReady
+                ? "ready"
+                : "unsupported",
+      summary:
+        micDiagnosticPhase === "browser-listening"
+          ? browserMicDiagnostic.detail ??
+            "Listening locally. Say one short sentence and wait for the browser transcript."
+          : browserMicDiagnostic.error ??
+            browserMicDiagnostic.detail ??
+            (browserReady
+              ? "Browser speech-to-text is ready to test here."
+              : "This browser does not expose built-in speech recognition, so the browser STT path is unavailable here."),
+      title: "Browser STT",
+      tone:
+        micDiagnosticPhase === "browser-listening"
+          ? "status-retry"
+          : browserMicDiagnostic.error
+            ? "status-unsafe"
+            : browserHasTranscript
+              ? "status-pass"
+              : browserReady
+                ? "status-retry"
+                : "status-unsafe",
+      transcript: browserMicDiagnostic.transcript,
+    };
+
+    const backendSection: AudioShortcutSection = {
+      id: "backend",
+      meta: [
+        preferredPath === "backend" ? "Used for live replies" : null,
+        backendMicDiagnostic.clipDurationMs !== null
+          ? `Clip ${formatLatency(backendMicDiagnostic.clipDurationMs)}`
+          : null,
+        backendMicDiagnostic.latencyMs !== null
+          ? `Provider latency ${formatLatency(backendMicDiagnostic.latencyMs)}`
+          : null,
+        backendMicDiagnostic.roundTripMs !== null
+          ? `Request latency ${formatLatency(backendMicDiagnostic.roundTripMs)}`
+          : null,
+        backendCheckedLabel,
+      ].filter((value): value is string => Boolean(value)),
+      statusLabel:
+        micDiagnosticPhase === "backend-recording"
+          ? "recording"
+          : micDiagnosticPhase === "backend-transcribing"
+            ? "transcribing"
+            : backendMicDiagnostic.error
+              ? "issue"
+              : backendHasTranscript
+                ? "captured"
+                : backendReady
+                  ? "ready"
+                  : "unavailable",
+      summary:
+        micDiagnosticPhase === "backend-recording"
+          ? backendMicDiagnostic.detail ??
+            `Recording a short sample before sending it to ${transcriptionProviderLabel}.`
+          : micDiagnosticPhase === "backend-transcribing"
+            ? backendMicDiagnostic.detail ??
+              `Waiting for the ${transcriptionProviderLabel} transcript plus latency metrics.`
+            : backendMicDiagnostic.error ??
+              backendMicDiagnostic.detail ??
+              (backendReady
+                ? `Backend transcription is ready to compare with Browser STT using ${transcriptionProviderLabel}.`
+                : "Backend transcription is not configured yet, so there is no API fallback to compare here."),
+      title: "Backend Transcribe",
+      tone:
+        micDiagnosticPhase === "backend-recording" ||
+        micDiagnosticPhase === "backend-transcribing"
+          ? "status-retry"
+          : backendMicDiagnostic.error
+            ? "status-unsafe"
+            : backendHasTranscript
+              ? "status-pass"
+              : backendReady
+                ? "status-retry"
+                : "status-unsafe",
+      transcript: backendMicDiagnostic.transcript,
+    };
+
+    let summary =
+      "Run Check Audio to measure the available speech paths. The cards below stay in sync with the setup speech tests.";
+
+    if (micDiagnosticPhase === "browser-listening") {
+      summary =
+        "Checking browser speech-to-text now. If backend transcription is ready, the comparison card will update right after this browser pass.";
+    } else if (micDiagnosticPhase === "backend-recording") {
+      summary =
+        "Browser STT finished. Recording one backend comparison sample now so you can compare both paths.";
+    } else if (micDiagnosticPhase === "backend-transcribing") {
+      summary = `Browser STT finished. Waiting for ${transcriptionProviderLabel} to return the comparison transcript and latency metrics.`;
+    } else if (browserHasTranscript && backendHasTranscript) {
+      summary =
+        "Latest Browser STT and backend transcription diagnostics are shown below, using the same results as the setup speech-test cards.";
+    } else if (browserHasTranscript) {
+      summary = backendReady
+        ? "Browser STT is working and shown below. The backend comparison path is still ready whenever you want to measure it too."
+        : "Browser STT is working and shown below.";
+    } else if (backendHasTranscript) {
+      summary = browserReady
+        ? `The latest browser attempt did not produce a usable transcript, but ${transcriptionProviderLabel} did.`
+        : `${transcriptionProviderLabel} is the available speech path here, and its latest result is shown below.`;
+    } else if (browserMicDiagnostic.error || backendMicDiagnostic.error) {
+      summary =
+        "Latest diagnostics need attention. Review the browser and backend cards below to see which path is blocked.";
+    }
+
+    return {
+      headline: "Check Audio",
+      meta: [
+        browserReady ? "Browser STT available" : "Browser STT unavailable",
+        backendReady
+          ? `Backend ready via ${transcriptionProviderLabel}`
+          : "Backend transcription unavailable",
+        preferredPath === "browser"
+          ? "Priority path: Browser STT"
+          : preferredPath === "backend"
+            ? `Priority path: ${transcriptionProviderLabel}`
+            : null,
+      ].filter((value): value is string => Boolean(value)),
+      sections: [browserSection, backendSection],
+      summary,
+      tone:
+        micDiagnosticPhase !== "idle"
+          ? "status-retry"
+          : browserHasTranscript || backendHasTranscript
+            ? "status-pass"
+            : browserMicDiagnostic.error || backendMicDiagnostic.error
+              ? "status-unsafe"
+              : "status-retry",
+    };
+  }, [
+    backendHealth?.transcription_ready,
+    backendMicDiagnostic,
+    browserSpeechRecognitionAvailable,
+    browserMicDiagnostic,
+    browserVoiceRecordingAvailable,
+    micDiagnosticPhase,
+    transcriptionProviderLabel,
+  ]);
   const liveStageConfidence = useMemo(() => {
     if (!feedback || feedbackStageId !== currentStageId) {
       return null;
@@ -563,14 +1836,20 @@ export default function TrainProcedurePage() {
       return "Demo window ended";
     }
 
+    if (isSessionPaused) {
+      return `Paused at ${formatDurationClock(demoTimeRemainingMs)}`;
+    }
+
     if (cameraReady) {
       return `${formatDurationClock(demoTimeRemainingMs)} remaining`;
     }
 
     return "2-minute limit";
-  }, [cameraReady, demoSessionExpired, demoTimeRemainingMs]);
+  }, [cameraReady, demoSessionExpired, demoTimeRemainingMs, isSessionPaused]);
   const demoTimerTone = demoSessionExpired
     ? "status-unsafe"
+    : isSessionPaused
+      ? "status-retry"
     : cameraReady && demoTimeRemainingMs <= 30_000
       ? "status-retry"
       : cameraReady
@@ -578,9 +1857,36 @@ export default function TrainProcedurePage() {
         : "";
   const liveBottomHeadline = demoSessionExpired
     ? "Demo window ended"
+    : isSessionPaused
+      ? "Session paused"
     : voiceStatusHeadline;
+  const liveStatusChip = useMemo(
+    () =>
+      getLiveStatusChip({
+        audioCoachingEnabled: equityMode.audioCoaching,
+        cameraReady,
+        demoSessionExpired,
+        isSessionPaused,
+        isSetupStage,
+        voiceSessionStatus,
+      }),
+    [
+      cameraReady,
+      demoSessionExpired,
+      equityMode.audioCoaching,
+      isSessionPaused,
+      isSetupStage,
+      voiceSessionStatus,
+    ],
+  );
   const liveBottomCopy = demoSessionExpired
     ? "This hackathon preview auto-stopped after 2 minutes. Start the camera again for another guided run."
+    : isSessionPaused
+      ? `This run is paused with ${formatDurationClock(
+          demoTimeRemainingMs,
+        )} remaining. Resume it to continue without using another live run.`
+    : cameraReady && isSetupStage
+      ? "Camera is live. Confirm the setup first, then hands-free coaching will begin."
     : cameraReady
       ? `Hackathon demo timer: ${formatDurationClock(
           demoTimeRemainingMs,
@@ -594,6 +1900,58 @@ export default function TrainProcedurePage() {
   useEffect(() => {
     demoSessionExpiredRef.current = demoSessionExpired;
   }, [demoSessionExpired]);
+
+  useEffect(() => {
+    if (!cameraReady || !isSetupStage) {
+      hasSpokenSetupPromptRef.current = false;
+      return;
+    }
+
+    if (
+      !equityMode.audioCoaching ||
+      !session ||
+      demoSessionExpired ||
+      isSessionPaused ||
+      hasSpokenSetupPromptRef.current
+    ) {
+      return;
+    }
+
+    hasSpokenSetupPromptRef.current = true;
+    let cancelled = false;
+
+    void speakText(
+      SETUP_VOICE_PROMPT,
+      equityMode.feedbackLanguage,
+      equityMode.coachVoice,
+    ).then((didSpeak) => {
+      if (cancelled) {
+        return;
+      }
+
+      if (didSpeak) {
+        setCoachError((current) =>
+          current === COACH_AUDIO_PLAYBACK_ERROR ? null : current,
+        );
+        return;
+      }
+
+      setCoachError(COACH_AUDIO_PLAYBACK_ERROR);
+    });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [
+    cameraReady,
+    demoSessionExpired,
+    equityMode.audioCoaching,
+    equityMode.coachVoice,
+    equityMode.feedbackLanguage,
+    isSessionPaused,
+    isSetupStage,
+    session,
+  ]);
 
   const persistSession = useCallback((nextSession: SessionRecord) => {
     const persistedSession = saveSession(nextSession, { makeActive: true });
@@ -612,15 +1970,15 @@ export default function TrainProcedurePage() {
     });
   }, [persistSession, session]);
 
-  function cancelActiveVoiceRecording() {
-    const activeRecording = activeVoiceRecordingRef.current;
-    activeVoiceRecordingRef.current = null;
+  function cancelActiveVoiceCapture() {
+    const activeCapture = activeVoiceCaptureRef.current;
+    activeVoiceCaptureRef.current = null;
 
-    if (!activeRecording) {
+    if (!activeCapture) {
       return;
     }
 
-    void activeRecording.cancel().catch(() => {});
+    void activeCapture.cancel().catch(() => {});
   }
 
   async function waitForCoachLoop(delayMs: number) {
@@ -629,25 +1987,62 @@ export default function TrainProcedurePage() {
     });
   }
 
+  const getDemoTimeRemainingSnapshot = useCallback(() => {
+    if (demoDeadlineRef.current !== null) {
+      return Math.max(0, demoDeadlineRef.current - Date.now());
+    }
+
+    if (pausedDemoTimeRemainingRef.current !== null) {
+      return pausedDemoTimeRemainingRef.current;
+    }
+
+    return demoSessionExpiredRef.current ? 0 : demoTimeRemainingMs;
+  }, [demoTimeRemainingMs]);
+
   function handleCameraReadyChange(ready: boolean) {
     setCameraReady(ready);
     liveCaptureProfileRef.current = ready ? captureProfileSignature : null;
-    autoSetupAnalysisAttemptedRef.current = false;
 
     if (ready) {
-      demoDeadlineRef.current = Date.now() + DEMO_CAMERA_SESSION_LIMIT_MS;
+      const isResumingPausedSession = resumePausedSessionRef.current;
+      const resumedRemainingMs = Math.max(
+        0,
+        pausedDemoTimeRemainingRef.current ?? demoTimeRemainingMs,
+      );
+      const nextTimeRemainingMs =
+        isResumingPausedSession && resumedRemainingMs > 0
+          ? resumedRemainingMs
+          : DEMO_CAMERA_SESSION_LIMIT_MS;
+
+      demoDeadlineRef.current = Date.now() + nextTimeRemainingMs;
       demoSessionExpiredRef.current = false;
       setDemoSessionExpired(false);
-      setDemoTimeRemainingMs(DEMO_CAMERA_SESSION_LIMIT_MS);
+      setDemoTimeRemainingMs(nextTimeRemainingMs);
+      if (isResumingPausedSession) {
+        pausedDemoTimeRemainingRef.current = null;
+        resumePausedSessionRef.current = false;
+      }
+      setIsSessionPaused(false);
+      cameraStopModeRef.current = "idle";
     } else {
       demoDeadlineRef.current = null;
-      setDemoTimeRemainingMs(
-        demoSessionExpiredRef.current ? 0 : DEMO_CAMERA_SESSION_LIMIT_MS,
-      );
+      if (cameraStopModeRef.current === "pause") {
+        setDemoTimeRemainingMs(
+          Math.max(0, pausedDemoTimeRemainingRef.current ?? demoTimeRemainingMs),
+        );
+      } else {
+        pausedDemoTimeRemainingRef.current = null;
+        setDemoTimeRemainingMs(
+          demoSessionExpiredRef.current ? 0 : DEMO_CAMERA_SESSION_LIMIT_MS,
+        );
+        setIsSessionPaused(false);
+        resumePausedSessionRef.current = false;
+      }
+      cameraStopModeRef.current = "idle";
     }
 
     if (!ready) {
-      cancelActiveVoiceRecording();
+      cancelActiveVoiceCapture();
       stopSpeechPlayback();
       setVoiceSessionStatus("idle");
     }
@@ -696,7 +2091,7 @@ export default function TrainProcedurePage() {
     };
   }, [cameraReady, captureProfileSignature]);
 
-  async function handleCameraToggle() {
+  const handleCameraToggle = useCallback(async () => {
     const camera = cameraRef.current;
 
     if (!camera) {
@@ -705,27 +2100,44 @@ export default function TrainProcedurePage() {
 
     if (camera.hasLiveStream()) {
       setLiveSessionAccessError(null);
-      camera.stopCamera();
+      cameraStopModeRef.current = "end";
+      pausedDemoTimeRemainingRef.current = null;
+      resumePausedSessionRef.current = false;
+      setIsSessionPaused(false);
+      camera.stopCamera(
+        "Session ended. Start the camera again to begin another guided run.",
+      );
       return;
     }
 
-    if (
-      hasLiveSessionLimitReached
-    ) {
+    const isResumingPausedSession =
+      isSessionPaused &&
+      !demoSessionExpired &&
+      getDemoTimeRemainingSnapshot() > 0;
+
+    if (hasLiveSessionLimitReached && !isResumingPausedSession) {
       setLiveSessionAccessError(
         "This demo account has used all 10 live sessions. Please ask an admin or the developer team to reset the limit.",
       );
       return;
     }
 
+    resumePausedSessionRef.current = isResumingPausedSession;
+
     try {
       await camera.startCamera();
     } catch (error) {
+      resumePausedSessionRef.current = false;
       setLiveSessionAccessError(
         error instanceof Error
           ? error.message
           : "The camera could not be started right now.",
       );
+      return;
+    }
+
+    if (isResumingPausedSession) {
+      setLiveSessionAccessError(null);
       return;
     }
 
@@ -738,10 +2150,66 @@ export default function TrainProcedurePage() {
         error instanceof Error
           ? error.message
           : "This account could not start another live session.";
-      setLiveSessionAccessError(nextMessage);
-      camera.stopCamera(nextMessage);
+      setLiveSessionAccessError(
+        `${nextMessage} The camera is still live for this demo run.`,
+      );
     }
-  }
+  }, [
+    demoSessionExpired,
+    getDemoTimeRemainingSnapshot,
+    hasLiveSessionLimitReached,
+    isSessionPaused,
+  ]);
+
+  const handlePauseSession = useCallback(() => {
+    const camera = cameraRef.current;
+
+    if (!camera || !camera.hasLiveStream()) {
+      return;
+    }
+
+    const nextRemainingMs = getDemoTimeRemainingSnapshot();
+    pausedDemoTimeRemainingRef.current = nextRemainingMs;
+    cameraStopModeRef.current = "pause";
+    setIsSessionPaused(true);
+    setDemoSessionExpired(false);
+    demoSessionExpiredRef.current = false;
+    setDemoTimeRemainingMs(nextRemainingMs);
+    setLiveSessionAccessError(null);
+    camera.stopCamera("Session paused. Resume this run when you are ready.");
+  }, [getDemoTimeRemainingSnapshot]);
+
+  const handlePauseSessionToggle = useCallback(async () => {
+    if (isSessionPaused) {
+      await handleCameraToggle();
+      return;
+    }
+
+    handlePauseSession();
+  }, [handleCameraToggle, handlePauseSession, isSessionPaused]);
+
+  const handleEndSession = useCallback(() => {
+    const camera = cameraRef.current;
+
+    pausedDemoTimeRemainingRef.current = null;
+    resumePausedSessionRef.current = false;
+    cameraStopModeRef.current = "end";
+    demoDeadlineRef.current = null;
+    demoSessionExpiredRef.current = false;
+    setDemoSessionExpired(false);
+    setDemoTimeRemainingMs(DEMO_CAMERA_SESSION_LIMIT_MS);
+    setIsSessionPaused(false);
+    setLiveSessionAccessError(null);
+    cancelActiveVoiceCapture();
+    stopSpeechPlayback();
+    setVoiceSessionStatus("idle");
+
+    if (camera) {
+      camera.stopCamera(
+        "Session ended. Start the camera again to begin another guided run.",
+      );
+    }
+  }, []);
 
   function handleSkillLevelChange(nextSkillLevel: SkillLevel) {
     setSkillLevel(nextSkillLevel);
@@ -811,13 +2279,22 @@ export default function TrainProcedurePage() {
     setCoachTurn(null);
     setCoachError(null);
     setIsCoachLoading(false);
-    cancelActiveVoiceRecording();
+    cancelActiveVoiceCapture();
     stopSpeechPlayback();
     setVoiceSessionStatus(cameraReady ? "starting" : "idle");
     setFrozenFrameUrl(null);
     setStudentQuestion("");
     setSimulationConfirmed(true);
-    autoSetupAnalysisAttemptedRef.current = false;
+    pausedDemoTimeRemainingRef.current = null;
+    resumePausedSessionRef.current = false;
+    cameraStopModeRef.current = "idle";
+    setIsSessionPaused(false);
+    demoDeadlineRef.current = cameraReady
+      ? Date.now() + DEMO_CAMERA_SESSION_LIMIT_MS
+      : null;
+    demoSessionExpiredRef.current = false;
+    setDemoSessionExpired(false);
+    setDemoTimeRemainingMs(DEMO_CAMERA_SESSION_LIMIT_MS);
     setAnalyzeError(null);
     setLiveSessionAccessError(null);
     setActiveWorkspacePanel("checklist");
@@ -865,13 +2342,32 @@ export default function TrainProcedurePage() {
       return;
     }
 
-    const capturedFrame = await cameraRef.current?.captureFrame({
+    let capturedFrame = await cameraRef.current?.captureFrame({
       mode: "analysis",
     });
 
+    if (!capturedFrame && currentStage.id === "setup" && !cameraReady) {
+      await handleCameraToggle();
+
+      for (let attempt = 0; attempt < 12; attempt += 1) {
+        await new Promise((resolve) => {
+          window.setTimeout(resolve, 180);
+        });
+
+        capturedFrame = await cameraRef.current?.captureFrame({
+          mode: "analysis",
+        });
+        if (capturedFrame) {
+          break;
+        }
+      }
+    }
+
     if (!capturedFrame) {
       setAnalyzeError(
-        "Turn on the camera and keep a visible frame before analyzing this step.",
+        currentStage.id === "setup"
+          ? "I could not capture the setup frame yet. Start the camera, keep the field visible, and try again."
+          : "Turn on the camera and keep a visible frame before analyzing this step.",
       );
       return;
     }
@@ -981,6 +2477,8 @@ export default function TrainProcedurePage() {
     calibration,
     currentStage,
     equityMode,
+    cameraReady,
+    handleCameraToggle,
     isOnline,
     latestLearnerGoal,
     practiceSurface,
@@ -1022,10 +2520,12 @@ export default function TrainProcedurePage() {
   const requestCoachTurn = useCallback(async ({
     audioClip,
     includeImage = true,
+    learnerMessage,
     messages,
   }: {
     audioClip?: RecordedVoiceClip | null;
     includeImage?: boolean;
+    learnerMessage?: string;
     messages: CoachChatMessage[];
   }): Promise<CoachChatResponse | null> => {
     if (!procedure || !currentStage || !session || !authUser) {
@@ -1036,6 +2536,18 @@ export default function TrainProcedurePage() {
     setCoachError(null);
 
     try {
+      const normalizedLearnerMessage = learnerMessage?.trim() ?? "";
+      const nextMessages = (
+        normalizedLearnerMessage
+          ? [
+              ...messages,
+              {
+                role: "user" as const,
+                content: normalizedLearnerMessage,
+              },
+            ]
+          : messages
+      ).slice(-COACH_CONVERSATION_WINDOW);
       const capturedFrame =
         includeImage && cameraReady && simulationConfirmed
           ? await cameraRef.current?.captureFrame({
@@ -1051,12 +2563,12 @@ export default function TrainProcedurePage() {
         feedback_language: equityMode.feedbackLanguage,
         simulation_confirmation: simulationConfirmed,
         image_base64: capturedFrame?.base64,
-        audio_base64: audioClip?.base64,
-        audio_format: audioClip?.format,
+        audio_base64: normalizedLearnerMessage ? undefined : audioClip?.base64,
+        audio_format: normalizedLearnerMessage ? undefined : audioClip?.format,
         session_id: session.id,
         student_name: authUser.name,
         equity_mode: toApiEquityMode(equityMode),
-        messages,
+        messages: nextMessages,
       });
 
       setCoachTurn(response);
@@ -1116,7 +2628,7 @@ export default function TrainProcedurePage() {
     coachMessagesRef.current = [];
     lastCoachMessageRef.current = null;
     lastCoachTurnAtRef.current = null;
-    setVoiceSessionStatus(cameraReady ? "starting" : "idle");
+    setVoiceSessionStatus(cameraReady && currentStageId !== "setup" ? "starting" : "idle");
   }, [cameraReady, currentStageId]);
 
   useEffect(() => {
@@ -1157,57 +2669,22 @@ export default function TrainProcedurePage() {
   }, [cameraReady]);
 
   useEffect(() => {
+    const generation = voiceLoopGenerationRef.current + 1;
+    voiceLoopGenerationRef.current = generation;
+    cancelActiveVoiceCapture();
+    stopSpeechPlayback();
+
     if (
       !cameraReady ||
       !procedure ||
-      !session ||
       !currentStage ||
-      currentStage.id !== "setup" ||
-      isAnalyzing ||
-      !simulationConfirmed
+      !session ||
+      !authUser ||
+      !coachLoopEnabled
     ) {
-      return;
-    }
-
-    const alreadyPassedSetup = session.events.some(
-      (event) =>
-        event.stageId === "setup" &&
-        event.stepStatus === "pass" &&
-        event.graded,
-    );
-
-    if (alreadyPassedSetup || autoSetupAnalysisAttemptedRef.current) {
-      return;
-    }
-
-    const timeoutId = window.setTimeout(() => {
-      autoSetupAnalysisAttemptedRef.current = true;
-      void handleAnalyzeStep();
-    }, 1400);
-
-    return () => {
-      window.clearTimeout(timeoutId);
-    };
-  }, [
-    cameraReady,
-    currentStage,
-    handleAnalyzeStep,
-    isAnalyzing,
-    procedure,
-    session,
-    simulationConfirmed,
-  ]);
-
-  useEffect(() => {
-    const generation = voiceLoopGenerationRef.current + 1;
-    voiceLoopGenerationRef.current = generation;
-    cancelActiveVoiceRecording();
-    stopSpeechPlayback();
-
-    if (!cameraReady || !procedure || !currentStage || !session || !authUser) {
       setVoiceSessionStatus("idle");
       return () => {
-        cancelActiveVoiceRecording();
+        cancelActiveVoiceCapture();
         stopSpeechPlayback();
       };
     }
@@ -1278,10 +2755,18 @@ export default function TrainProcedurePage() {
             }
 
             setVoiceSessionStatus("speaking");
-            await speakTextAndWait(
+            const didSpeakCoachTurn = await speakTextAndWait(
               proactiveResponse.coach_message,
               equityMode.feedbackLanguage,
               equityMode.coachVoice,
+            );
+            if (!didSpeakCoachTurn) {
+              setCoachError(COACH_AUDIO_PLAYBACK_ERROR);
+              setVoiceSessionStatus("paused");
+              return;
+            }
+            setCoachError((current) =>
+              current === COACH_AUDIO_PLAYBACK_ERROR ? null : current,
             );
             lastCoachMessageRef.current = {
               at: Date.now(),
@@ -1313,9 +2798,10 @@ export default function TrainProcedurePage() {
 
         setVoiceSessionStatus("listening");
 
-        let recordingController: VoiceRecordingController | null = null;
+        let voiceCaptureController: VoiceCaptureController | null = null;
         try {
-          recordingController = await startVoiceRecording({
+          voiceCaptureController = await startVoiceCapture({
+            language: equityMode.feedbackLanguage,
             maxDurationMs: VOICE_RECORDING_MAX_DURATION_MS,
             minSpeechDurationMs: VOICE_RECORDING_MIN_SPEECH_MS,
             silenceDurationMs: VOICE_RECORDING_SILENCE_DURATION_MS,
@@ -1332,9 +2818,9 @@ export default function TrainProcedurePage() {
           continue;
         }
 
-        if (!recordingController) {
+        if (!voiceCaptureController) {
           setCoachError(
-            "This browser does not support microphone recording for the voice coach.",
+            "This browser does not support voice capture for the coach.",
           );
           setVoiceSessionStatus("paused");
           await waitForCoachLoop(VOICE_RECOVERY_RETRY_DELAY_MS);
@@ -1342,19 +2828,23 @@ export default function TrainProcedurePage() {
           continue;
         }
 
-        activeVoiceRecordingRef.current = recordingController;
-        const learnerClip = await recordingController.result;
-        if (activeVoiceRecordingRef.current === recordingController) {
-          activeVoiceRecordingRef.current = null;
+        activeVoiceCaptureRef.current = voiceCaptureController;
+        const learnerTurn = await voiceCaptureController.result;
+        if (activeVoiceCaptureRef.current === voiceCaptureController) {
+          activeVoiceCaptureRef.current = null;
         }
 
         if (cancelled || voiceLoopGenerationRef.current !== generation) {
           return;
         }
 
+        const learnerTranscript = learnerTurn?.transcript.trim() ?? "";
+        const learnerClip = learnerTurn?.audioClip ?? null;
+
         if (
-          !learnerClip ||
-          learnerClip.durationMs < VOICE_RECORDING_MIN_SPEECH_MS
+          !learnerTranscript &&
+          (!learnerClip ||
+            learnerClip.durationMs < VOICE_RECORDING_MIN_SPEECH_MS)
         ) {
           silentListenWindows += 1;
           if (silentListenWindows >= 2) {
@@ -1383,8 +2873,9 @@ export default function TrainProcedurePage() {
         setVoiceSessionStatus("thinking");
 
         const learnerResponse = await requestCoachTurn({
-          audioClip: learnerClip,
+          audioClip: learnerTranscript ? null : learnerClip,
           includeImage: false,
+          learnerMessage: learnerTranscript,
           messages: coachMessagesRef.current.slice(-COACH_CONVERSATION_WINDOW),
         });
 
@@ -1399,9 +2890,11 @@ export default function TrainProcedurePage() {
           continue;
         }
 
-        const learnerTranscript = learnerResponse.learner_transcript.trim();
+        const resolvedLearnerTranscript =
+          learnerTranscript || learnerResponse.learner_transcript.trim();
         const learnerMessage =
-          learnerTranscript || learnerResponse.learner_goal_summary.trim();
+          resolvedLearnerTranscript ||
+          learnerResponse.learner_goal_summary.trim();
 
         if (learnerMessage) {
           appendCoachMessage(
@@ -1424,10 +2917,18 @@ export default function TrainProcedurePage() {
         }
         setVoiceSessionStatus("speaking");
         if (!isDuplicateGuidance) {
-          await speakTextAndWait(
+          const didSpeakCoachTurn = await speakTextAndWait(
             learnerResponse.coach_message,
             equityMode.feedbackLanguage,
             equityMode.coachVoice,
+          );
+          if (!didSpeakCoachTurn) {
+            setCoachError(COACH_AUDIO_PLAYBACK_ERROR);
+            setVoiceSessionStatus("paused");
+            return;
+          }
+          setCoachError((current) =>
+            current === COACH_AUDIO_PLAYBACK_ERROR ? null : current,
           );
           lastCoachMessageRef.current = {
             at: Date.now(),
@@ -1459,13 +2960,14 @@ export default function TrainProcedurePage() {
 
     return () => {
       cancelled = true;
-      cancelActiveVoiceRecording();
+      cancelActiveVoiceCapture();
       stopSpeechPlayback();
     };
   }, [
     appendCoachMessage,
     authUser,
     cameraReady,
+    coachLoopEnabled,
     currentStage,
     equityMode.audioCoaching,
     equityMode.coachVoice,
@@ -1517,10 +3019,22 @@ export default function TrainProcedurePage() {
           <div>
             <h2 className="panel-title">Live session setup</h2>
             <p className="panel-copy">
-              The demo now uses one fixed guided setup so learners can start faster.
+              Run a quick preflight before live training so device, speech, and backend
+              dependencies are visible in one place.
             </p>
           </div>
-          <span className="pill">demo defaults active</span>
+          <div style={{ display: "flex", gap: 12, alignItems: "center", flexWrap: "wrap" }}>
+            <span className={`status-badge ${setupSummaryTone}`}>
+              {isRefreshingSetupChecks ? "checking..." : setupSummaryLabel}
+            </span>
+            <button
+              className="button-secondary"
+              onClick={() => void refreshSetupChecks()}
+              type="button"
+            >
+              {isRefreshingSetupChecks ? "Refreshing..." : "Refresh Checks"}
+            </button>
+          </div>
         </div>
 
         <div className="inline-form-row">
@@ -1571,13 +3085,287 @@ export default function TrainProcedurePage() {
         </div>
         <div className="feedback-block" style={{ marginTop: 18 }}>
           <div className="feedback-header">
-            <strong>Fixed demo behavior</strong>
-            <span className="status-badge status-pass">active</span>
+            <strong>System preflight</strong>
+            <span className={`status-badge ${setupSummaryTone}`}>{setupSummaryLabel}</span>
           </div>
           <p className="feedback-copy" style={{ marginTop: 12 }}>
-            Simulation-only confirmation, hands-free audio coaching, and offline-first
-            logging are always on for this demo.
+            Simulation-only confirmation, speech-path readiness, backend connectivity,
+            and device permissions are checked here before live training starts.
           </p>
+          {setupChecksUpdatedLabel ? (
+            <p className="feedback-copy" style={{ marginTop: 10 }}>
+              Last checked at {setupChecksUpdatedLabel}.
+            </p>
+          ) : null}
+          <div
+            style={{
+              display: "grid",
+              gap: 12,
+              marginTop: 16,
+            }}
+          >
+            {setupChecks.map((check) => (
+              <div
+                key={check.id}
+                style={{
+                  border: "1px solid rgba(36, 58, 102, 0.1)",
+                  borderRadius: 18,
+                  padding: 16,
+                }}
+              >
+                <div
+                  style={{
+                    display: "flex",
+                    justifyContent: "space-between",
+                    gap: 12,
+                    alignItems: "flex-start",
+                  }}
+                >
+                  <div>
+                    <strong>{check.label}</strong>
+                    <p className="feedback-copy" style={{ marginTop: 8 }}>
+                      {check.summary}
+                    </p>
+                    <p className="feedback-copy" style={{ marginTop: 8 }}>
+                      {check.detail}
+                    </p>
+                  </div>
+                  <span className={`status-badge ${getSetupCheckTone(check.status)}`}>
+                    {check.status === "pass"
+                      ? "ready"
+                      : check.status === "retry"
+                        ? "check"
+                        : "blocked"}
+                  </span>
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+
+        <div className="feedback-block" style={{ marginTop: 18 }}>
+          <div className="feedback-header">
+            <strong>Mic and speech test</strong>
+            <span className={`status-badge ${micDiagnosticSummaryTone}`}>
+              {micDiagnosticSummaryLabel}
+            </span>
+          </div>
+          <p className="feedback-copy" style={{ marginTop: 12 }}>
+            Speak one short sentence into the microphone to verify voice-to-text in
+            this trainer before the live loop begins.
+          </p>
+          <p className="feedback-copy" style={{ marginTop: 10 }}>
+            These checks use mic capture only. They do not send a camera frame or
+            consume image-analysis calls.
+          </p>
+          <p className="feedback-copy" style={{ marginTop: 10 }}>
+            {speechTestSummary}
+          </p>
+          <div
+            style={{
+              display: "grid",
+              gap: 12,
+              marginTop: 16,
+            }}
+          >
+            <div
+              style={{
+                border: "1px solid rgba(36, 58, 102, 0.1)",
+                borderRadius: 18,
+                padding: 16,
+              }}
+            >
+              <div
+                style={{
+                  alignItems: "flex-start",
+                  display: "flex",
+                  flexWrap: "wrap",
+                  gap: 12,
+                  justifyContent: "space-between",
+                }}
+              >
+                <div>
+                  <strong>Browser speech-to-text</strong>
+                  <p className="feedback-copy" style={{ marginTop: 8 }}>
+                    {browserSpeechRecognitionAvailable
+                      ? "Runs local speech recognition in the browser for the fastest possible reply path."
+                      : "This browser does not expose built-in speech recognition, so this path cannot be tested here."}
+                  </p>
+                </div>
+                <button
+                  className="button-secondary"
+                  disabled={!canRunBrowserMicDiagnostic}
+                  onClick={() => void handleBrowserMicDiagnostic()}
+                  type="button"
+                >
+                  {browserMicDiagnosticButtonLabel}
+                </button>
+              </div>
+              <div className="trainer-defaults-list" style={{ marginTop: 12 }}>
+                <span
+                  className={`status-badge ${
+                    micDiagnosticPhase === "browser-listening"
+                      ? "status-retry"
+                      : browserMicDiagnostic.error
+                        ? "status-unsafe"
+                        : browserMicDiagnostic.transcript
+                          ? "status-pass"
+                          : "status-retry"
+                  }`}
+                >
+                  {micDiagnosticPhase === "browser-listening"
+                    ? "listening"
+                    : browserMicDiagnostic.error
+                      ? "unavailable"
+                      : browserMicDiagnostic.transcript
+                        ? "captured"
+                        : browserSpeechRecognitionAvailable
+                          ? "ready"
+                          : "unsupported"}
+                </span>
+                {browserMicDiagnostic.latencyMs !== null ? (
+                  <span className="pill">
+                    Local latency {formatLatency(browserMicDiagnostic.latencyMs)}
+                  </span>
+                ) : null}
+                {browserMicDiagnostic.clipDurationMs !== null ? (
+                  <span className="pill">
+                    Listen window {formatLatency(browserMicDiagnostic.clipDurationMs)}
+                  </span>
+                ) : null}
+                {browserMicDiagnostic.processingMs !== null ? (
+                  <span className="pill">
+                    Processing {formatLatency(browserMicDiagnostic.processingMs)}
+                  </span>
+                ) : null}
+                {browserMicDiagnostic.roundTripMs !== null ? (
+                  <span className="pill">
+                    Local cycle {formatLatency(browserMicDiagnostic.roundTripMs)}
+                  </span>
+                ) : null}
+                {browserMicDiagnosticUpdatedLabel ? (
+                  <span className="pill">Last check {browserMicDiagnosticUpdatedLabel}</span>
+                ) : null}
+              </div>
+              {browserMicDiagnostic.transcript ? (
+                <p className="feedback-copy" style={{ marginTop: 12 }}>
+                  Transcript: &quot;{browserMicDiagnostic.transcript}&quot;
+                </p>
+              ) : null}
+              {browserMicDiagnostic.detail ? (
+                <p className="feedback-copy" style={{ marginTop: 12 }}>
+                  {browserMicDiagnostic.detail}
+                </p>
+              ) : null}
+              {browserMicDiagnostic.error ? (
+                <p
+                  className="feedback-copy"
+                  style={{ color: "#9a3d2d", marginTop: 12 }}
+                >
+                  {browserMicDiagnostic.error}
+                </p>
+              ) : null}
+            </div>
+
+            <div
+              style={{
+                border: "1px solid rgba(36, 58, 102, 0.1)",
+                borderRadius: 18,
+                padding: 16,
+              }}
+            >
+              <div
+                style={{
+                  alignItems: "flex-start",
+                  display: "flex",
+                  flexWrap: "wrap",
+                  gap: 12,
+                  justifyContent: "space-between",
+                }}
+              >
+                <div>
+                  <strong>Backend transcription</strong>
+                  <p className="feedback-copy" style={{ marginTop: 8 }}>
+                    Records a short clip, sends it to {transcriptionProviderLabel},
+                    and reports provider latency plus full request latency. Clip
+                    length is shown separately and is not counted as latency.
+                  </p>
+                </div>
+                <button
+                  className="button-secondary"
+                  disabled={!canRunBackendMicDiagnostic}
+                  onClick={() => void handleBackendMicDiagnostic()}
+                  type="button"
+                >
+                  {backendMicDiagnosticButtonLabel}
+                </button>
+              </div>
+              <div className="trainer-defaults-list" style={{ marginTop: 12 }}>
+                <span
+                  className={`status-badge ${
+                    micDiagnosticPhase === "backend-recording" ||
+                    micDiagnosticPhase === "backend-transcribing"
+                      ? "status-retry"
+                      : backendMicDiagnostic.error
+                        ? "status-unsafe"
+                        : backendMicDiagnostic.transcript
+                          ? "status-pass"
+                          : backendHealth?.transcription_ready
+                            ? "status-retry"
+                            : "status-unsafe"
+                  }`}
+                >
+                  {micDiagnosticPhase === "backend-recording"
+                    ? "recording"
+                    : micDiagnosticPhase === "backend-transcribing"
+                      ? "transcribing"
+                      : backendMicDiagnostic.error
+                        ? "issue"
+                        : backendMicDiagnostic.transcript
+                          ? "captured"
+                          : backendHealth?.transcription_ready
+                            ? "ready"
+                            : "unavailable"}
+                </span>
+                {backendMicDiagnostic.clipDurationMs !== null ? (
+                  <span className="pill">
+                    Clip {formatLatency(backendMicDiagnostic.clipDurationMs)}
+                  </span>
+                ) : null}
+                {backendMicDiagnostic.latencyMs !== null ? (
+                  <span className="pill">
+                    Provider latency {formatLatency(backendMicDiagnostic.latencyMs)}
+                  </span>
+                ) : null}
+                {backendMicDiagnostic.roundTripMs !== null ? (
+                  <span className="pill">
+                    Request latency {formatLatency(backendMicDiagnostic.roundTripMs)}
+                  </span>
+                ) : null}
+                {backendMicDiagnosticUpdatedLabel ? (
+                  <span className="pill">Last check {backendMicDiagnosticUpdatedLabel}</span>
+                ) : null}
+              </div>
+              {backendMicDiagnostic.transcript ? (
+                <p className="feedback-copy" style={{ marginTop: 12 }}>
+                  Transcript: &quot;{backendMicDiagnostic.transcript}&quot;
+                </p>
+              ) : null}
+              {backendMicDiagnostic.detail ? (
+                <p className="feedback-copy" style={{ marginTop: 12 }}>
+                  {backendMicDiagnostic.detail}
+                </p>
+              ) : null}
+              {backendMicDiagnostic.error ? (
+                <p
+                  className="feedback-copy"
+                  style={{ color: "#9a3d2d", marginTop: 12 }}
+                >
+                  {backendMicDiagnostic.error}
+                </p>
+              ) : null}
+            </div>
+          </div>
         </div>
 
       </article>
@@ -1596,7 +3384,11 @@ export default function TrainProcedurePage() {
     userRole: authUser?.role ?? null,
   });
 
-  if (isAuthLoading || isLoadingProcedure) {
+  const shouldShowTrainerBootScreen =
+    isAuthLoading ||
+    (isLoadingProcedure && (!authUser || !procedure || !session || !currentStage));
+
+  if (shouldShowTrainerBootScreen) {
     return (
       <AppFrame
         brandSubtitle="Simulation-only guided practice"
@@ -1691,7 +3483,7 @@ export default function TrainProcedurePage() {
             className="button-primary trainer-session-action"
             disabled={
               cameraStatus.state === "requesting" ||
-              (!cameraReady && hasLiveSessionLimitReached)
+              (!cameraReady && hasLiveSessionLimitReached && !isSessionPaused)
             }
             onClick={() => void handleCameraToggle()}
             type="button"
@@ -1758,63 +3550,178 @@ export default function TrainProcedurePage() {
                   onReadyChange={handleCameraReadyChange}
                   onStartRequest={handleCameraToggle}
                   onStatusChange={handleCameraStatusChange}
-                  primeMicrophoneOnStart={equityMode.audioCoaching}
+                  primeMicrophoneOnStart={false}
                 />
+              </div>
+            </div>
+            <div className="trainer-camera-controls">
+              <div className="trainer-camera-controls-copy">
+                <p className="trainer-camera-controls-label">Session controls</p>
+                <p className="trainer-camera-controls-status">
+                  {cameraStatus.label}
+                </p>
+              </div>
+              <div className="trainer-camera-controls-actions">
+                <button
+                  className="button-primary"
+                  disabled={
+                    cameraStatus.state === "requesting" ||
+                    (!cameraReady && !isSessionPaused)
+                  }
+                  onClick={() => void handlePauseSessionToggle()}
+                  type="button"
+                >
+                  {isSessionPaused ? "Resume Session" : "Pause Session"}
+                </button>
+                <button
+                  className="button-secondary"
+                  disabled={
+                    cameraStatus.state === "requesting" ||
+                    (!cameraReady && !isSessionPaused)
+                  }
+                  onClick={handleEndSession}
+                  type="button"
+                >
+                  End Session
+                </button>
               </div>
             </div>
           </div>
 
-          <div className="live-bottom-bar trainer-session-bar">
-            <div className="live-waveform">
-              {[40, 58, 92, 68, 52, 86, 100, 74, 62, 95, 76, 48, 84, 98, 80, 60, 42].map(
-                (height, index) => (
-                  <span
-                    className="live-wave-bar"
-                    key={`wave-${height}-${index}`}
-                    style={{
-                      height: `${height}%`,
-                      animationDelay: `${(index % 6) * 0.14}s`,
-                    }}
-                  />
-                ),
-              )}
-            </div>
+          <div
+            className={`live-bottom-bar trainer-session-bar ${
+              showCheckAudioShortcut ? "has-audio-insight" : ""
+            }`}
+          >
+            <div className="live-bottom-primary-row">
+              <div className="live-waveform">
+                {[40, 58, 92, 68, 52, 86, 100, 74, 62, 95, 76, 48, 84, 98, 80, 60, 42].map(
+                  (height, index) => (
+                    <span
+                      className="live-wave-bar"
+                      key={`wave-${height}-${index}`}
+                      style={{
+                        height: `${height}%`,
+                        animationDelay: `${(index % 6) * 0.14}s`,
+                      }}
+                    />
+                  ),
+                )}
+              </div>
 
-            <div className="live-bottom-status">
-              <div className="live-mic-badge">MIC</div>
-              <div>
-                <p className="live-bottom-kicker">AI System Status</p>
-                <p className="live-bottom-headline">{liveBottomHeadline}</p>
-                <p className="live-bottom-copy">{liveBottomCopy}</p>
+              <div className="live-bottom-status">
+                <span className={`status-badge live-status-chip ${liveStatusChip.tone}`}>
+                  {liveStatusChip.label}
+                </span>
+                <div>
+                  <p className="live-bottom-kicker">AI System Status</p>
+                  <p className="live-bottom-headline">{liveBottomHeadline}</p>
+                  <p className="live-bottom-copy">{liveBottomCopy}</p>
+                </div>
+              </div>
+
+              <div className="live-bottom-actions">
+                {showCheckAudioShortcut ? (
+                  <>
+                    <button
+                      className="button-primary"
+                      disabled={isCheckAudioShortcutDisabled}
+                      onClick={() => void handleCheckAudioShortcut()}
+                      type="button"
+                    >
+                      {checkAudioShortcutLabel}
+                    </button>
+                    {showStopAudioShortcut ? (
+                      <button
+                        className="button-secondary"
+                        onClick={() => void handleStopAudioShortcut()}
+                        type="button"
+                      >
+                        Stop Audio Check
+                      </button>
+                    ) : null}
+                  </>
+                ) : null}
+                <button
+                  className="button-primary"
+                  disabled={!canCheckCurrentStep}
+                  onClick={() => void handleAnalyzeStep()}
+                  type="button"
+                >
+                  {isAnalyzing ? "Analyzing Step..." : "Check My Step"}
+                </button>
+                {canAdvance ? (
+                  <button
+                    className="button-secondary"
+                    onClick={handleAdvance}
+                    type="button"
+                  >
+                    Advance
+                  </button>
+                ) : null}
+                {canFinishReview ? (
+                  <button
+                    className="button-secondary"
+                    onClick={handleOpenReview}
+                    type="button"
+                  >
+                    Review
+                  </button>
+                ) : null}
               </div>
             </div>
 
-            <div className="live-bottom-actions">
-              <button
-                className="button-primary"
-                disabled={!cameraReady || isAnalyzing || !simulationConfirmed}
-                onClick={() => void handleAnalyzeStep()}
-                type="button"
-              >
-                {isAnalyzing ? "Analyzing Step..." : "Check My Step"}
-              </button>
-              <button
-                className="button-secondary"
-                disabled={!canAdvance}
-                onClick={handleAdvance}
-                type="button"
-              >
-                Advance
-              </button>
-              <button
-                className="button-secondary"
-                disabled={!canFinishReview}
-                onClick={handleOpenReview}
-                type="button"
-              >
-                Review
-              </button>
-            </div>
+            {showCheckAudioShortcut ? (
+              <div className={`live-audio-insight ${audioShortcutInsight.tone}`}>
+                <div className="live-audio-insight-header">
+                  <strong>{audioShortcutInsight.headline}</strong>
+                  {audioShortcutInsight.meta.length > 0 ? (
+                    <div className="trainer-defaults-list">
+                      {audioShortcutInsight.meta.map((item) => (
+                        <span className="pill" key={item}>
+                          {item}
+                        </span>
+                      ))}
+                    </div>
+                  ) : null}
+                </div>
+                <p className="live-audio-insight-copy">
+                  {audioShortcutInsight.summary}
+                </p>
+                <div className="live-audio-insight-grid">
+                  {audioShortcutInsight.sections.map((section) => (
+                    <div
+                      className={`live-audio-insight-card ${section.tone}`}
+                      key={section.id}
+                    >
+                      <div className="live-audio-insight-card-header">
+                        <strong>{section.title}</strong>
+                        <span className={`status-badge ${section.tone}`}>
+                          {section.statusLabel}
+                        </span>
+                      </div>
+                      {section.meta.length > 0 ? (
+                        <div className="trainer-defaults-list">
+                          {section.meta.map((item) => (
+                            <span className="pill" key={`${section.id}-${item}`}>
+                              {item}
+                            </span>
+                          ))}
+                        </div>
+                      ) : null}
+                      <p className="live-audio-insight-copy">
+                        {section.summary}
+                      </p>
+                      {section.transcript ? (
+                        <p className="live-audio-insight-transcript">
+                          Transcript: &quot;{section.transcript}&quot;
+                        </p>
+                      ) : null}
+                    </div>
+                  ))}
+                </div>
+              </div>
+            ) : null}
           </div>
         </div>
 

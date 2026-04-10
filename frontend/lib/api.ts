@@ -16,6 +16,8 @@ import type {
   KnowledgePackResponse,
   LearningStateSnapshot,
   SessionRecord,
+  TranscriptionTestRequest,
+  TranscriptionTestResponse,
   UserRole,
   ProcedureDefinition,
   ResolveReviewCaseRequest,
@@ -130,6 +132,21 @@ export async function getHealthStatus(): Promise<HealthStatus> {
   });
 
   return readJson<HealthStatus>(response);
+}
+
+export async function testTranscription(
+  payload: TranscriptionTestRequest,
+): Promise<TranscriptionTestResponse> {
+  const response = await fetch(buildApiUrl("/transcription/test"), {
+    body: JSON.stringify(payload),
+    cache: "no-store",
+    headers: {
+      "Content-Type": "application/json",
+    },
+    method: "POST",
+  });
+
+  return readJson<TranscriptionTestResponse>(response);
 }
 
 export async function generateKnowledgePack(

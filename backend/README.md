@@ -18,33 +18,33 @@ This package contains the FastAPI backend for Clinical Curator AI.
 ## Local Commands
 
 ```bash
-python -m venv .venv
-source .venv/bin/activate
-pip install -r requirements.txt
+micromamba run -n hackathon pip install -r requirements.txt
 cp .env.example .env
-uvicorn app.main:app --reload --port 8001
+micromamba run -n hackathon uvicorn app.main:app --reload --reload-dir app --port 8001
 ```
 
 Testing:
 
 ```bash
-source .venv/bin/activate
-pytest
+micromamba run -n hackathon pytest
 ```
 
 Focused runs used most often:
 
 ```bash
-./.venv/bin/pytest tests/test_services.py tests/test_api.py -q
+micromamba run -n hackathon pytest tests/test_services.py tests/test_api.py -q
 ```
 
 ## Runtime Notes
 
 - persistent runtime data lives under `backend/app/data`
 - public student demo accounts are seeded from code and normal self-service accounts are also supported
+- usernames are normalized to lowercase and remain globally unique across self-service and seeded accounts
 - optional private admin and developer accounts come from `PRIVATE_SEED_ACCOUNTS_JSON`
 - the backend should run on a persistent host in production, not Vercel serverless
 - Anthropic and OpenAI secrets belong on the backend only; use [../docs/cloud-keys.md](../docs/cloud-keys.md) for the exact setup steps
+- `GET /health` exposes AI and transcription readiness for the trainer setup tab
+- `POST /transcription/test` is the backend speech-diagnostic endpoint used by the trainer setup flow
 
 ## Main Route Groups
 
@@ -56,6 +56,7 @@ Focused runs used most often:
 - `coach-chat`
 - `debrief`
 - `knowledge-pack`
+- `transcription`
 - `tts`
 - `review-cases`
 

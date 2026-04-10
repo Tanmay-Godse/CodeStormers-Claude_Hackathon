@@ -60,14 +60,15 @@ function knowledgeProgressKey(ownerUsername: string) {
 
 function normalizeCoachVoicePreset(value: unknown): CoachVoicePreset {
   if (value === "guide_male") {
-    return "guide_female";
+    return "guide_male";
   }
 
   if (value === "mentor_male") {
-    return "mentor_female";
+    return "guide_male";
   }
 
   if (
+    value === "guide_male" ||
     value === "guide_female" ||
     value === "mentor_female" ||
     value === "system_default"
