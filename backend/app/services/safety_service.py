@@ -55,6 +55,14 @@ def evaluate_safety_gate(
             ),
         )
 
+    fast_clear_result = _build_fast_simulation_clear_result(
+        payload=payload,
+        procedure=procedure,
+        stage=stage,
+    )
+    if fast_clear_result is not None:
+        return fast_clear_result
+
     try:
         response_data = send_json_message(
             model=settings.ai_analysis_model,
@@ -107,6 +115,33 @@ def evaluate_safety_gate(
         confidence=draft.confidence,
         reason=draft.reason.strip(),
         refusal_message=refusal_message,
+    )
+
+
+def _build_fast_simulation_clear_result(
+    *,
+    payload: AnalyzeFrameRequest,
+    procedure: ProcedureDefinition,
+    stage: ProcedureStage,
+) -> SafetyGateResult | None:
+    if not procedure.simulation_only or not payload.image_base64:
+        return None
+
+    practice_surface = (payload.practice_surface or procedure.practice_surface).strip()
+    surface_detail = (
+        f" using the confirmed practice surface '{practice_surface}'."
+        if practice_surface
+        else "."
+    )
+    return SafetyGateResult(
+        status="cleared",
+        confidence=0.84 if stage.id == "setup" else 0.8,
+        reason=(
+            "The learner confirmed a simulation-only scene in a simulation-only procedure, "
+            "and no clinical text indicators were detected, so the frame was cleared without "
+            f"an extra safety-model pass{surface_detail}"
+        ),
+        refusal_message=None,
     )
 
 

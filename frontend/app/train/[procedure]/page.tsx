@@ -79,22 +79,22 @@ const DEMO_CAMERA_SESSION_LIMIT_MS = 2 * 60 * 1000;
 const SETUP_LOCAL_CHECK_TIMEOUT_MS = 5_000;
 const COACH_CONVERSATION_WINDOW = 4;
 const VOICE_RECORDING_MAX_DURATION_MS = 10_000;
-const LIVE_VOICE_CAPTURE_MAX_DURATION_MS = 5_000;
+const LIVE_VOICE_CAPTURE_MAX_DURATION_MS = 2_400;
 const VOICE_RECORDING_MIN_SPEECH_MS = 220;
-const VOICE_RECORDING_SILENCE_DURATION_MS = 800;
+const VOICE_RECORDING_SILENCE_DURATION_MS = 350;
 const VOICE_POST_SPEAK_LISTEN_DELAY_MS = 120;
 const VOICE_RELISTEN_DELAY_MS = 120;
 const VOICE_RECOVERY_RETRY_DELAY_MS = 250;
-const VOICE_PROACTIVE_REPROMPT_DELAY_MS = 500;
-const VOICE_PROACTIVE_REPROMPT_AFTER_SILENT_WINDOWS = 3;
-const VOICE_MIN_GAP_BETWEEN_PROACTIVE_TURNS_MS = 12_000;
-const VOICE_DUPLICATE_GUIDANCE_COOLDOWN_MS = 20_000;
-const COACH_IMAGE_REFRESH_WINDOW_MS = 4_500;
+const VOICE_PROACTIVE_REPROMPT_DELAY_MS = 250;
+const VOICE_PROACTIVE_REPROMPT_AFTER_SILENT_WINDOWS = 2;
+const VOICE_MIN_GAP_BETWEEN_PROACTIVE_TURNS_MS = 3_500;
+const VOICE_DUPLICATE_GUIDANCE_COOLDOWN_MS = 8_000;
+const COACH_IMAGE_REFRESH_WINDOW_MS = 12_000;
 const BROWSER_AUDIO_CHECK_EARLY_EXIT_MS = 1_500;
 const COACH_AUDIO_PLAYBACK_ERROR =
   "Coach guidance is available in text, but spoken playback did not start. Open the Coach tab and use Test Voice, or check browser/site audio output.";
 const SETUP_VOICE_PROMPT =
-  "Setup check is live. Center the practice field, then press Check My Step when the frame looks ready.";
+  "Setup check is live. I am verifying camera, microphone, speech, and backend readiness for training.";
 
 type VoiceSessionStatus =
   | "idle"
@@ -250,7 +250,7 @@ function getTranscriptionProviderLabel(
 ): string {
   const normalized = apiBaseUrl?.trim().toLowerCase() ?? "";
   if (normalized.includes("api.openai.com")) {
-    return "OpenAI API";
+    return "Cloud API";
   }
   if (normalized) {
     return "Custom transcription API";
@@ -284,6 +284,25 @@ async function readMediaPermissionState(
     return permissionStatus.state;
   } catch {
     return "unsupported";
+  }
+}
+
+async function probeLocalSetupCameraAccess(): Promise<boolean> {
+  if (!navigator.mediaDevices?.getUserMedia) {
+    return false;
+  }
+
+  const stream = await navigator.mediaDevices.getUserMedia({
+    audio: false,
+    video: true,
+  });
+
+  try {
+    return stream
+      .getVideoTracks()
+      .some((track) => track.readyState === "live");
+  } finally {
+    stream.getTracks().forEach((track) => track.stop());
   }
 }
 
@@ -397,6 +416,7 @@ function getVoiceStatusHeadline(
   status: VoiceSessionStatus,
   cameraReady: boolean,
   isLiveSessionActive: boolean,
+  isAnalyzing: boolean,
 ): string {
   if (!cameraReady) {
     return "Camera offline";
@@ -404,6 +424,10 @@ function getVoiceStatusHeadline(
 
   if (!isLiveSessionActive) {
     return "Local preview";
+  }
+
+  if (isAnalyzing) {
+    return "Analyzing step";
   }
 
   switch (status) {
@@ -620,6 +644,7 @@ export default function TrainProcedurePage() {
   const [isSessionPaused, setIsSessionPaused] = useState(false);
   const [isLiveSessionActive, setIsLiveSessionActive] = useState(false);
   const [setupCameraVerified, setSetupCameraVerified] = useState(false);
+  const [setupCheckMessage, setSetupCheckMessage] = useState<string | null>(null);
   const activeVoiceCaptureRef = useRef<VoiceCaptureController | null>(null);
   const browserMicDiagnosticControllerRef =
     useRef<BrowserSpeechRecognitionController | null>(null);
@@ -1440,7 +1465,7 @@ export default function TrainProcedurePage() {
               ? "API and AI coach are reachable"
               : "API reachable, but AI coach config needs attention",
             detail: nextBackendHealth.ai_ready
-              ? `Simulation-only mode is ${nextBackendHealth.simulation_only ? "on" : "off"}. Coach provider '${nextBackendHealth.ai_provider}' is configured with model '${nextBackendHealth.ai_coach_model}'.`
+              ? `Simulation-only mode is ${nextBackendHealth.simulation_only ? "on" : "off"}. AI coach configuration is ready.`
               : "The API responded, but the AI coach configuration is incomplete.",
           }
         : {
@@ -1979,8 +2004,9 @@ export default function TrainProcedurePage() {
         voiceSessionStatus,
         cameraReady,
         isLiveSessionActive,
+        isAnalyzing,
       ),
-    [cameraReady, isLiveSessionActive, voiceSessionStatus],
+    [cameraReady, isAnalyzing, isLiveSessionActive, voiceSessionStatus],
   );
   const captureProfileSignature = "standard";
   const demoTimerLabel = useMemo(() => {
@@ -2049,6 +2075,8 @@ export default function TrainProcedurePage() {
       ? `This run is paused with ${formatDurationClock(
           demoTimeRemainingMs,
         )} remaining. Resume it to continue without using another live run.`
+    : isAnalyzing && isLiveSessionActive
+      ? "The current frame is being checked and the next spoken cue is being prepared."
     : isPreviewCameraMode && isSetupStage
       ? "Camera preview is live for local setup only. This has not used a counted live session yet."
     : isPreviewCameraMode
@@ -2059,7 +2087,13 @@ export default function TrainProcedurePage() {
       ? `Demo timer: ${formatDurationClock(
           demoTimeRemainingMs,
         )} remaining. Coach voice is live.`
-      : "Start the camera to begin this guided practice block.";
+    : "Start the camera to begin this guided practice block.";
+
+  useEffect(() => {
+    if (currentStageId !== "setup") {
+      setSetupCheckMessage(null);
+    }
+  }, [currentStageId]);
 
   useEffect(() => {
     coachMessagesRef.current = coachMessages;
@@ -2138,7 +2172,7 @@ export default function TrainProcedurePage() {
     });
   }, [persistSession, session]);
 
-  function cancelActiveVoiceCapture() {
+  const cancelActiveVoiceCapture = useCallback(() => {
     const activeCapture = activeVoiceCaptureRef.current;
     activeVoiceCaptureRef.current = null;
 
@@ -2147,7 +2181,7 @@ export default function TrainProcedurePage() {
     }
 
     void activeCapture.cancel().catch(() => {});
-  }
+  }, []);
 
   async function waitForCoachLoop(delayMs: number) {
     await new Promise((resolve) => {
@@ -2438,7 +2472,7 @@ export default function TrainProcedurePage() {
         "Session ended. Start the camera again to begin another guided run.",
       );
     }
-  }, [setLiveSessionActiveState]);
+  }, [cancelActiveVoiceCapture, setLiveSessionActiveState]);
 
   function handleSkillLevelChange(nextSkillLevel: SkillLevel) {
     setSkillLevel(nextSkillLevel);
@@ -2681,12 +2715,31 @@ export default function TrainProcedurePage() {
     }
 
     if (currentStage.id === "setup") {
+      setActiveWorkspacePanel("setup");
       setIsAnalyzing(true);
       setAnalyzeError(null);
+      setFeedback(null);
+      setFeedbackStageId(null);
+      setFrozenFrameUrl(null);
+      cancelActiveVoiceCapture();
+      stopSpeechPlayback();
+      setVoiceSessionStatus("idle");
+      setLiveSessionAccessError(null);
+      setLiveSessionActiveState(false);
+      pausedDemoTimeRemainingRef.current = null;
+      resumePausedSessionRef.current = false;
+      cameraStopModeRef.current = "idle";
+      demoDeadlineRef.current = null;
+      demoSessionExpiredRef.current = false;
+      setDemoSessionExpired(false);
+      setDemoTimeRemainingMs(DEMO_CAMERA_SESSION_LIMIT_MS);
+      setIsSessionPaused(false);
 
       try {
         const setupStartedAt = performance.now();
-        let cameraVerified = cameraRef.current?.hasLiveStream() ?? false;
+        const hadVisiblePreview = cameraRef.current?.hasLiveStream() ?? false;
+        let cameraVerified = setupCameraVerified || hadVisiblePreview;
+        let nextStageIdAfterSetup: string | null = null;
 
         const getRemainingSetupBudgetMs = () =>
           SETUP_LOCAL_CHECK_TIMEOUT_MS -
@@ -2700,15 +2753,21 @@ export default function TrainProcedurePage() {
           return remainingBudgetMs;
         };
 
+        if (hadVisiblePreview) {
+          cameraRef.current?.stopCamera(
+            "Setup checks are running locally. The preview will close until real training begins.",
+          );
+        }
+
         if (!cameraVerified && mediaCaptureSupported) {
-          await withTimeout(
-            cameraRef.current?.startCamera() ?? Promise.resolve(),
+          const didVerifyCamera = await withTimeout(
+            probeLocalSetupCameraAccess(),
             requireRemainingSetupBudgetMs(
               "Setup checks must finish within 5 seconds. Please run Check My Step again.",
             ),
             "Camera permission took too long. Please allow camera access and run Check My Step again.",
           );
-          cameraVerified = cameraRef.current?.hasLiveStream() ?? false;
+          cameraVerified = didVerifyCamera;
         }
 
         if (cameraVerified) {
@@ -2744,72 +2803,25 @@ export default function TrainProcedurePage() {
           microphonePermissionState: setupSnapshot.microphonePermissionState,
           setupHealthError: setupSnapshot.setupHealthError,
         });
-        const attempt =
-          session.events.filter((event) => event.stageId === currentStage.id).length + 1;
-        const event: SessionEvent = {
-          stageId: currentStage.id,
-          attempt,
-          stepStatus: response.step_status,
-          analysisMode: response.analysis_mode,
-          graded: response.grading_decision === "graded",
-          gradingReason: response.grading_reason ?? undefined,
-          issues: response.issues,
-          scoreDelta: response.score_delta,
-          coachingMessage: response.coaching_message,
-          overlayTargetIds: response.overlay_target_ids,
-          visibleObservations: response.visible_observations,
-          nextAction: response.next_action,
-          confidence: response.confidence,
-          safetyGate: response.safety_gate,
-          requiresHumanReview: response.requires_human_review,
-          humanReviewReason: response.human_review_reason ?? undefined,
-          reviewCaseId: response.review_case_id ?? undefined,
-          createdAt: new Date().toISOString(),
-        };
-
-        persistSession({
-          ...session,
-          ownerUsername: session.ownerUsername ?? authUser.username,
-          skillLevel,
-          calibration,
-          equityMode,
-          debrief: undefined,
-          events: [...session.events, event],
-          updatedAt: new Date().toISOString(),
-        });
-
-        setFeedback(response);
-        setFeedbackStageId(currentStage.id);
+        setSetupCheckMessage(response.coaching_message);
         setAnalyzeError(null);
-        setFrozenFrameUrl(null);
 
-        if (
-          response.step_status === "pass" &&
-          response.grading_decision === "graded"
-        ) {
-          const nextStageId = findNextStageId(procedure, currentStage.id);
-          if (nextStageId) {
-            setCurrentStageId(nextStageId);
-            setActiveWorkspacePanel("checklist");
-          }
+        if (response.step_status === "pass") {
+          nextStageIdAfterSetup = findNextStageId(procedure, currentStage.id);
+        }
+
+        if (nextStageIdAfterSetup) {
+          setCurrentStageId(nextStageIdAfterSetup);
+          setActiveWorkspacePanel("checklist");
         }
       } catch (error) {
+        setSetupCheckMessage(null);
         setAnalyzeError(
           error instanceof Error
             ? error.message
             : "The local setup check could not finish.",
         );
       } finally {
-        if (
-          currentStage.id === "setup" &&
-          cameraRef.current?.hasLiveStream() &&
-          !liveSessionActiveRef.current
-        ) {
-          cameraStopModeRef.current = "idle";
-          cameraRef.current.stopCamera(
-            "Local setup check finished. Start the camera again when you are ready for live training.",
-          );
-        }
         setIsAnalyzing(false);
       }
       return;
@@ -2921,6 +2933,9 @@ export default function TrainProcedurePage() {
           equityMode.feedbackLanguage,
           equityMode.coachVoice,
         );
+        if (!liveSessionActiveRef.current) {
+          return;
+        }
 
         if (!didSpeakStepCoaching) {
           setCoachError(COACH_AUDIO_PLAYBACK_ERROR);
@@ -2979,6 +2994,7 @@ export default function TrainProcedurePage() {
     buildLocalSetupFeedback,
     calibration,
     currentStage,
+    cancelActiveVoiceCapture,
     equityMode,
     isLiveSessionActive,
     isOnline,
@@ -2988,7 +3004,9 @@ export default function TrainProcedurePage() {
     microphonePermissionState,
     practiceSurface,
     procedure,
+    setLiveSessionActiveState,
     persistSession,
+    setupCameraVerified,
     refreshSetupChecks,
     session,
     simulationConfirmed,
@@ -3059,7 +3077,6 @@ export default function TrainProcedurePage() {
         simulationConfirmed &&
         (
           nextMessages.length === 0 ||
-          !normalizedLearnerMessage ||
           lastCoachVisualAtRef.current === null ||
           Date.now() - lastCoachVisualAtRef.current >=
             COACH_IMAGE_REFRESH_WINDOW_MS
@@ -3212,9 +3229,9 @@ export default function TrainProcedurePage() {
             coachMessagesRef.current.length === 0 ? "starting" : "watching",
           );
 
-          const proactiveResponse = await requestCoachTurn({
-            messages: coachMessagesRef.current.slice(-COACH_CONVERSATION_WINDOW),
-          });
+        const proactiveResponse = await requestCoachTurn({
+          messages: coachMessagesRef.current.slice(-COACH_CONVERSATION_WINDOW),
+        });
 
           if (cancelled || voiceLoopGenerationRef.current !== generation) {
             return;
@@ -3258,6 +3275,13 @@ export default function TrainProcedurePage() {
               equityMode.feedbackLanguage,
               equityMode.coachVoice,
             );
+            if (
+              cancelled ||
+              voiceLoopGenerationRef.current !== generation ||
+              !liveSessionActiveRef.current
+            ) {
+              return;
+            }
             if (!didSpeakCoachTurn) {
               setCoachError(COACH_AUDIO_PLAYBACK_ERROR);
               setVoiceSessionStatus("paused");
@@ -3423,6 +3447,13 @@ export default function TrainProcedurePage() {
             equityMode.feedbackLanguage,
             equityMode.coachVoice,
           );
+          if (
+            cancelled ||
+            voiceLoopGenerationRef.current !== generation ||
+            !liveSessionActiveRef.current
+          ) {
+            return;
+          }
           if (!didSpeakCoachTurn) {
             setCoachError(COACH_AUDIO_PLAYBACK_ERROR);
             setVoiceSessionStatus("paused");
@@ -3468,6 +3499,7 @@ export default function TrainProcedurePage() {
     appendCoachMessage,
     authUser,
     cameraReady,
+    cancelActiveVoiceCapture,
     coachLoopEnabled,
     currentStage,
     equityMode.audioCoaching,
@@ -3976,7 +4008,10 @@ export default function TrainProcedurePage() {
           </div>
           <p className="trainer-session-note">
             {liveSessionAccessError ??
-              "Keep the surface centered and use Check My Step when the frame looks ready."}
+              (isSetupStage
+                ? setupCheckMessage ??
+                  "Use Check My Step to run a quick local system preflight before live training."
+                : "Keep the surface centered and use Check My Step when the frame looks ready.")}
           </p>
         </div>
 
@@ -4162,7 +4197,13 @@ export default function TrainProcedurePage() {
                   onClick={() => void handleAnalyzeStep()}
                   type="button"
                 >
-                  {isAnalyzing ? "Analyzing Step..." : "Check My Step"}
+                  {isAnalyzing
+                    ? isSetupStage
+                      ? "Running Setup Check..."
+                      : "Analyzing Step..."
+                    : isSetupStage
+                      ? "Run Setup Check"
+                      : "Check My Step"}
                 </button>
                 {canAdvance ? (
                   <button

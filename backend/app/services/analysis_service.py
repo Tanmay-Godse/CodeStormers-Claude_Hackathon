@@ -20,7 +20,7 @@ from app.services.scoring_service import (
     validate_overlay_target_ids,
 )
 
-ANALYSIS_RESPONSE_MAX_TOKENS = 520
+ANALYSIS_RESPONSE_MAX_TOKENS = 360
 
 
 def analyze_frame_payload(payload: AnalyzeFrameRequest) -> AnalyzeFrameResponse:

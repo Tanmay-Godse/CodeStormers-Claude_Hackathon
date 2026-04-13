@@ -311,9 +311,9 @@ const DEFAULT_VOICE_RECORDING_SILENCE_DURATION_MS = 800;
 const DEFAULT_VOICE_RECORDING_SILENCE_THRESHOLD = 0.012;
 const DEFAULT_VOICE_RECORDING_FALLBACK_RMS = 0.006;
 const DEFAULT_VOICE_RECORDING_MIN_CLIP_DURATION_MS = 650;
-const DEFAULT_BROWSER_SPEECH_MAX_INTERIM_SILENCE_MS = 1_200;
-const DEFAULT_BROWSER_SPEECH_STOP_AFTER_FINAL_RESULT_MS = 650;
-const BROWSER_SPEECH_START_TIMEOUT_MS = 2_600;
+const DEFAULT_BROWSER_SPEECH_MAX_INTERIM_SILENCE_MS = 450;
+const DEFAULT_BROWSER_SPEECH_STOP_AFTER_FINAL_RESULT_MS = 250;
+const BROWSER_SPEECH_START_TIMEOUT_MS = 1_400;
 const BROWSER_SPEECH_MIN_COMPLETION_TIMEOUT_MS = 4_600;
 const BROWSER_SPEECH_MAX_COMPLETION_TIMEOUT_MS = 18_000;
 
@@ -322,6 +322,11 @@ let activeAudioUrl: string | null = null;
 let activeAudioCompletionResolver: ((didFinish: boolean) => void) | null = null;
 let activeSpeechPlaybackResolver: ((didFinish: boolean) => void) | null = null;
 let activeSpeechPlaybackCleanup: (() => void) | null = null;
+let speechPlaybackRequestVersion = 0;
+
+function isCurrentSpeechPlaybackRequest(requestVersion: number): boolean {
+  return requestVersion === speechPlaybackRequestVersion;
+}
 
 function getAudioContextConstructor():
   | BrowserAudioContextConstructor
@@ -513,6 +518,8 @@ export async function primeVoiceRecordingPermission(): Promise<void> {
 }
 
 export function stopSpeechPlayback() {
+  speechPlaybackRequestVersion += 1;
+
   if (!canUseSpeechSynthesis()) {
     cleanupActiveSpeechPlayback(false);
     cleanupActiveAudioPlayback();
@@ -1192,6 +1199,7 @@ async function speakTextWithFallback(
   waitForCompletion: boolean,
 ): Promise<boolean> {
   stopSpeechPlayback();
+  const requestVersion = speechPlaybackRequestVersion;
 
   if (shouldPreferBrowserSpeech(language, preset)) {
     const didPlayBrowserSpeech = await playBrowserSpeech(
@@ -1199,6 +1207,7 @@ async function speakTextWithFallback(
       language,
       preset,
       waitForCompletion,
+      requestVersion,
     );
     if (didPlayBrowserSpeech) {
       return true;
@@ -1210,6 +1219,7 @@ async function speakTextWithFallback(
     language,
     preset,
     waitForCompletion,
+    requestVersion,
   );
   if (didPlayBackendAudio) {
     return true;
@@ -1219,7 +1229,13 @@ async function speakTextWithFallback(
     return false;
   }
 
-  return playBrowserSpeech(text, language, preset, waitForCompletion);
+  return playBrowserSpeech(
+    text,
+    language,
+    preset,
+    waitForCompletion,
+    requestVersion,
+  );
 }
 
 async function playBackendSpeech(
@@ -1227,8 +1243,12 @@ async function playBackendSpeech(
   language: FeedbackLanguage,
   preset: CoachVoicePreset,
   waitForCompletion: boolean,
+  requestVersion: number,
 ): Promise<boolean> {
-  if (typeof window === "undefined") {
+  if (
+    typeof window === "undefined" ||
+    !isCurrentSpeechPlaybackRequest(requestVersion)
+  ) {
     return false;
   }
 
@@ -1238,7 +1258,10 @@ async function playBackendSpeech(
       feedback_language: language,
       coach_voice: preset,
     });
-    if (audioBlob.size <= 0) {
+    if (
+      audioBlob.size <= 0 ||
+      !isCurrentSpeechPlaybackRequest(requestVersion)
+    ) {
       return false;
     }
 
@@ -1280,7 +1303,17 @@ async function playBackendSpeech(
       });
     }
 
+    if (!isCurrentSpeechPlaybackRequest(requestVersion)) {
+      cleanupActiveAudioPlayback();
+      return false;
+    }
+
     await audioElement.play();
+
+    if (!isCurrentSpeechPlaybackRequest(requestVersion)) {
+      cleanupActiveAudioPlayback();
+      return false;
+    }
 
     if (!completionPromise) {
       return true;
@@ -1299,8 +1332,12 @@ function playBrowserSpeech(
   language: FeedbackLanguage,
   preset: CoachVoicePreset,
   waitForCompletion: boolean,
+  requestVersion: number,
 ): Promise<boolean> {
-  if (!canUseSpeechSynthesis()) {
+  if (
+    !canUseSpeechSynthesis() ||
+    !isCurrentSpeechPlaybackRequest(requestVersion)
+  ) {
     return Promise.resolve(false);
   }
 
@@ -1317,7 +1354,7 @@ function playBrowserSpeech(
     let handleVoicesChanged: (() => void) | null = null;
 
     const markSpeechStarted = () => {
-      if (speechStarted) {
+      if (speechStarted || !isCurrentSpeechPlaybackRequest(requestVersion)) {
         return;
       }
 
@@ -1390,6 +1427,10 @@ function playBrowserSpeech(
     }, BROWSER_SPEECH_START_TIMEOUT_MS);
 
     const speakOnce = () => {
+      if (settled || !isCurrentSpeechPlaybackRequest(requestVersion)) {
+        finalize(false);
+        return;
+      }
       const utterance = new SpeechSynthesisUtterance(text);
       configureUtterance(utterance, language, preset);
       utterance.onstart = () => {

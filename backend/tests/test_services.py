@@ -703,23 +703,15 @@ def test_safety_service_blocks_without_simulation_confirmation() -> None:
     assert "confirmation" in result.reason.lower()
 
 
-def test_safety_service_allows_visible_learner_in_nonclinical_scene(
+def test_safety_service_fast_clears_simulation_only_scene_without_model_call(
     monkeypatch,
 ) -> None:
     monkeypatch.setattr(
         safety_service,
         "send_json_message",
-        lambda **_: {
-            "status": "blocked",
-            "confidence": 0.94,
-            "reason": (
-                "The image shows a person with a real human face and upper body in a casual indoor environment. "
-                "No orange, banana, foam pad, or tools are visible yet."
-            ),
-            "refusal_message": (
-                "Analysis was blocked because the image may depict a real patient or live clinical scene."
-            ),
-        },
+        lambda **_: (_ for _ in ()).throw(
+            AssertionError("Fast safety path should skip the safety-model call.")
+        ),
     )
 
     payload = AnalyzeFrameRequest(
@@ -739,7 +731,7 @@ def test_safety_service_allows_visible_learner_in_nonclinical_scene(
     )
 
     assert result.status == "cleared"
-    assert "learner or bystander" in result.reason.lower()
+    assert "without an extra safety-model pass" in result.reason.lower()
     assert result.refusal_message is None
 
 
@@ -749,12 +741,9 @@ def test_safety_service_does_not_block_benign_or_word_in_student_question(
     monkeypatch.setattr(
         safety_service,
         "send_json_message",
-        lambda **_: {
-            "status": "cleared",
-            "confidence": 0.91,
-            "reason": "The image appears to be a simulation-only practice scene.",
-            "refusal_message": None,
-        },
+        lambda **_: (_ for _ in ()).throw(
+            AssertionError("Fast safety path should skip the safety-model call.")
+        ),
     )
 
     payload = AnalyzeFrameRequest(
@@ -777,13 +766,15 @@ def test_safety_service_does_not_block_benign_or_word_in_student_question(
     assert result.status == "cleared"
 
 
-def test_safety_service_clears_setup_when_classifier_fails(
+def test_safety_service_fast_clears_setup_stage_without_model_call(
     monkeypatch,
 ) -> None:
     monkeypatch.setattr(
         safety_service,
         "send_json_message",
-        lambda **_: (_ for _ in ()).throw(AIRequestError("boom")),
+        lambda **_: (_ for _ in ()).throw(
+            AssertionError("Fast safety path should skip the safety-model call.")
+        ),
     )
 
     payload = AnalyzeFrameRequest(
@@ -804,7 +795,7 @@ def test_safety_service_clears_setup_when_classifier_fails(
     )
 
     assert result.status == "cleared"
-    assert "setup stage was allowed" in result.reason.lower()
+    assert "without an extra safety-model pass" in result.reason.lower()
     assert result.refusal_message is None
 
 
