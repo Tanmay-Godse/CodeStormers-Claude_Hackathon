@@ -108,7 +108,7 @@ npm run typecheck
 npm run build
 
 cd ../backend
-micromamba run -n hackathon pytest
+micromamba run -n <your env> pytest
 ```
 
 ## Public Demo Notes

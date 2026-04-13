@@ -14,18 +14,18 @@ It assumes you are starting from the repo root.
 - `Node.js 20+`
 - `npm 10+`
 - `Python 3.10+`
-- `micromamba` with the `hackathon` environment available
+- `micromamba` with your environment available
 - a browser with camera and microphone support
 
-The commands below use `micromamba run -n hackathon` so the backend always uses
+The commands below use `micromamba run -n <your env>` so the backend always uses
 the intended Python environment. If you already ran `micromamba activate
-hackathon`, the same commands also work without that prefix.
+<your env>`, the same commands also work without that prefix.
 
 ## 1. Start The Backend
 
 ```bash
 cd backend
-micromamba run -n hackathon pip install -r requirements.txt
+micromamba run -n <your env> pip install -r requirements.txt
 cp .env.example .env
 ```
 
@@ -49,7 +49,7 @@ the backend.
 Run the backend:
 
 ```bash
-micromamba run -n hackathon uvicorn app.main:app --reload --reload-dir app --port 8001
+micromamba run -n <your env> uvicorn app.main:app --reload --reload-dir app --port 8001
 ```
 
 On first startup, the backend creates or refreshes the seeded public demo
@@ -172,7 +172,7 @@ npm run typecheck
 npm run build
 
 cd ../backend
-micromamba run -n hackathon pytest
+micromamba run -n <your env> pytest
 ```
 
 Optional clean-state reset for local demos:
@@ -212,7 +212,7 @@ the backend.
 - The live session starts but stops quickly:
   each camera run is intentionally capped at `2 minutes` in the current demo build.
 - Uvicorn reload fails with a watchfiles permission error:
-  use `micromamba run -n hackathon uvicorn app.main:app --reload --reload-dir app --port 8001`
+  use `micromamba run -n <your env> uvicorn app.main:app --reload --reload-dir app --port 8001`
   from the `backend/` folder so file watching stays scoped to `app/`.
 - Frontend loads but API calls fail:
   `NEXT_PUBLIC_API_BASE_URL` does not match the running backend.
