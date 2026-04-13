@@ -56,11 +56,6 @@ Learner Browser
    -> AI providers + persistent runtime data
 ```
 
-Recommended hosted shape:
-
-- `frontend` on Vercel
-- `backend` on a separate persistent Python host
-
 ## Quick Start
 
 If you want the app running quickly:
@@ -108,7 +103,7 @@ npm run typecheck
 npm run build
 
 cd ../backend
-micromamba run -n hackathon pytest
+micromamba run -n <your env> pytest
 ```
 
 ## Public Demo Notes

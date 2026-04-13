@@ -18,21 +18,21 @@ This package contains the FastAPI backend for Clinical Curator AI.
 ## Local Commands
 
 ```bash
-micromamba run -n hackathon pip install -r requirements.txt
+micromamba run -n <your env> pip install -r requirements.txt
 cp .env.example .env
-micromamba run -n hackathon uvicorn app.main:app --reload --reload-dir app --port 8001
+micromamba run -n <your env> uvicorn app.main:app --reload --reload-dir app --port 8001
 ```
 
 Testing:
 
 ```bash
-micromamba run -n hackathon pytest
+micromamba run -n <your env> pytest
 ```
 
 Focused runs used most often:
 
 ```bash
-micromamba run -n hackathon pytest tests/test_services.py tests/test_api.py -q
+micromamba run -n <your env> pytest tests/test_services.py tests/test_api.py -q
 ```
 
 ## Runtime Notes

@@ -33,12 +33,12 @@ current demo build.
 
 ```bash
 cd backend
-micromamba run -n hackathon pip install -r requirements.txt
+micromamba run -n <your env> pip install -r requirements.txt
 cp .env.example .env
 ```
 
-If your shell already has `micromamba activate hackathon`, the same commands
-work without the prefix. The docs keep `micromamba run -n hackathon` so the
+If your shell already has `micromamba activate <your env>`, the same commands
+work without the prefix. The docs keep `micromamba run -n <your env>` so the
 backend environment stays explicit.
 
 The recommended defaults already live in `backend/.env.example`. After copying
@@ -63,7 +63,7 @@ old shell-exported values. If you update a key, restart the backend.
 Run it:
 
 ```bash
-micromamba run -n hackathon uvicorn app.main:app --reload --reload-dir app --port 8001
+micromamba run -n <your env> uvicorn app.main:app --reload --reload-dir app --port 8001
 ```
 
 ## Frontend Setup
@@ -215,7 +215,7 @@ npm run typecheck
 npm run build
 
 cd ../backend
-micromamba run -n hackathon pytest
+micromamba run -n <your env> pytest
 ```
 
 Useful smoke checks:
@@ -247,7 +247,7 @@ curl http://localhost:8001/api/v1/procedures/simple-interrupted-suture
   verify the backend is using persistent storage and the same signed-in account; the browser cache can be rebuilt from backend SQLite, but ephemeral backend storage will lose synced session history.
 - Uvicorn reload hits a watchfiles permission error:
   start the backend from `backend/` with
-  `micromamba run -n hackathon uvicorn app.main:app --reload --reload-dir app --port 8001`
+  `micromamba run -n <your env> uvicorn app.main:app --reload --reload-dir app --port 8001`
   so reload only watches `app/`.
 
 ## Related Docs
