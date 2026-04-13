@@ -107,7 +107,7 @@ Seeded public student accounts still exist for judging and smoke testing:
 Public demo rules:
 
 - each student account has `10` live sessions
-- consuming a live session happens when a camera run starts
+- consuming a live session happens when the first real non-setup training step begins
 - only admin or developer accounts can reset seeded-account limits
 - usernames are normalized to lowercase and trimmed before create/sign-in, so
   duplicates are rejected even if the casing or spaces differ
@@ -181,11 +181,11 @@ Setup and audio flow:
 
 Session behavior and controls:
 
-- starting the camera consumes one live-session allowance
-- setup does not auto-pass when the camera starts; `Check My Step` remains the
-  frame-analysis action
-- on the setup stage, `Check My Step` can bootstrap capture if the camera is
-  not already live
+- starting the camera opens local preview first and does not consume quota by itself
+- setup does not auto-pass when the camera starts
+- on the setup stage, `Check My Step` runs a local preflight, can briefly open
+  camera and mic permissions, and then closes the preview again
+- the counted live session begins on the first real non-setup `Check My Step`
 - `Pause Session` stops live capture while preserving the current run state and
   remaining time
 - `End Session` closes the current run cleanly

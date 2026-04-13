@@ -97,10 +97,11 @@ git status --short
 3. Confirm `/dashboard`, `/knowledge`, and `/library` load.
 4. Open `/train/simple-interrupted-suture`.
 5. In `Setup`, confirm the preflight checks load and `Check Audio` can report Browser STT and backend transcription results.
-6. Start a live session and confirm the backend receives analysis calls after `Check My Step`.
-7. Confirm live-session quota updates after the camera run starts.
-8. Open the generated review.
-9. If using admin or developer accounts, confirm review queue and approval pages still load.
+6. Run `Check My Step` once on `Setup` and confirm the local preflight finishes without starting a counted live session.
+7. Start preview and then run `Check My Step` on the first real non-setup stage.
+8. Confirm the backend receives analysis calls and live-session quota updates at that point, not when preview starts.
+9. Open the generated review.
+10. If using admin or developer accounts, confirm review queue and approval pages still load.
 
 ## Deployment Pointers
 

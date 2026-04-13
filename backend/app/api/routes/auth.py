@@ -1,4 +1,4 @@
-from fastapi import APIRouter, HTTPException, Query, status
+from fastapi import APIRouter, Header, HTTPException, Query, status
 
 from app.schemas.auth import (
     AuthAccountPreview,
@@ -21,14 +21,40 @@ from app.services.auth_service import (
 router = APIRouter(tags=["auth"])
 
 
+@router.get("/auth/session", response_model=AuthAccountPreview)
+def get_authenticated_auth_account(
+    actor_account_id: str = Header(alias="X-Account-Id", min_length=3),
+    actor_session_token: str = Header(alias="X-Session-Token", min_length=16),
+) -> AuthAccountPreview:
+    try:
+        return auth_service.get_authenticated_auth_account(
+            actor_account_id=actor_account_id,
+            actor_session_token=actor_session_token,
+        )
+    except AuthAccountNotFoundError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except AuthPermissionError as exc:
+        raise HTTPException(status_code=403, detail=str(exc)) from exc
+    except AuthValidationError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
 @router.get("/auth/accounts/preview", response_model=AuthAccountPreview)
 def preview_auth_account(
     identifier: str = Query(min_length=3),
+    actor_account_id: str = Header(alias="X-Account-Id", min_length=3),
+    actor_session_token: str = Header(alias="X-Session-Token", min_length=16),
 ) -> AuthAccountPreview:
     try:
-        return auth_service.preview_auth_account(identifier)
+        return auth_service.preview_authenticated_auth_account(
+            identifier=identifier,
+            actor_account_id=actor_account_id,
+            actor_session_token=actor_session_token,
+        )
     except AuthAccountNotFoundError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except AuthPermissionError as exc:
+        raise HTTPException(status_code=403, detail=str(exc)) from exc
     except AuthDuplicateDisplayNameError as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from exc
     except AuthValidationError as exc:
@@ -86,8 +112,8 @@ def update_auth_account(
 
 @router.get("/auth/admin-requests", response_model=list[AuthAccountPreview])
 def list_pending_admin_requests(
-    developer_account_id: str = Query(min_length=3),
-    developer_session_token: str = Query(min_length=16),
+    developer_account_id: str = Header(alias="X-Account-Id", min_length=3),
+    developer_session_token: str = Header(alias="X-Session-Token", min_length=16),
 ) -> list[AuthAccountPreview]:
     try:
         return auth_service.list_pending_admin_requests(
@@ -126,8 +152,8 @@ def approve_admin_request(
 
 @router.get("/auth/demo-accounts", response_model=list[AuthAccountPreview])
 def list_demo_accounts(
-    actor_account_id: str = Query(min_length=3),
-    actor_session_token: str = Query(min_length=16),
+    actor_account_id: str = Header(alias="X-Account-Id", min_length=3),
+    actor_session_token: str = Header(alias="X-Session-Token", min_length=16),
 ) -> list[AuthAccountPreview]:
     try:
         return auth_service.list_live_session_accounts(

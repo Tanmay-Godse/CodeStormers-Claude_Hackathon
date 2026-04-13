@@ -1,6 +1,6 @@
 from typing import Any
 
-from fastapi import APIRouter, HTTPException, Query
+from fastapi import APIRouter, Header, HTTPException
 
 from app.schemas.learning_state import (
     LearningStateSnapshot,
@@ -16,8 +16,8 @@ router = APIRouter(tags=["learning-state"])
 
 @router.get("/learning-state", response_model=LearningStateSnapshot)
 def get_learning_state(
-    account_id: str = Query(min_length=3),
-    session_token: str = Query(min_length=16),
+    account_id: str = Header(alias="X-Account-Id", min_length=3),
+    session_token: str = Header(alias="X-Session-Token", min_length=16),
 ) -> LearningStateSnapshot:
     try:
         return learning_state_service.get_learning_state(

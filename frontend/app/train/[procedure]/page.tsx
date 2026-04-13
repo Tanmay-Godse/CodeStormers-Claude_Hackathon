@@ -1376,15 +1376,11 @@ export default function TrainProcedurePage() {
       : "Stop Preview"
     : isSessionPaused
       ? "Resume Session"
-    : isSetupStage
-      ? "Start Preview"
-    : hasLiveSessionLimitReached
-      ? "Live Session Limit Reached"
-    : cameraStatus.state === "requesting"
-      ? "Connecting Camera..."
+      : cameraStatus.state === "requesting"
+        ? "Connecting Camera..."
         : cameraStatus.canRetry && cameraStatus.state !== "idle"
           ? "Retry Camera"
-          : "Start Camera";
+          : "Start Preview";
   const liveSessionQuotaLabel = useMemo(() => {
     if (!authUser) {
       return null;
@@ -2357,13 +2353,6 @@ export default function TrainProcedurePage() {
       !demoSessionExpired &&
       getDemoTimeRemainingSnapshot() > 0;
 
-    if (!isSetupStage && hasLiveSessionLimitReached && !isResumingPausedSession) {
-      setLiveSessionAccessError(
-        "This demo account has used all 10 live sessions. Please ask an admin or the developer team to reset the limit.",
-      );
-      return;
-    }
-
     resumePausedSessionRef.current = isResumingPausedSession;
     primeSpeechPlayback();
 
@@ -2379,27 +2368,18 @@ export default function TrainProcedurePage() {
       return;
     }
 
+    setLiveSessionAccessError(null);
+
     if (isSetupStage && !liveSessionActiveRef.current) {
-      setLiveSessionAccessError(null);
       return;
     }
 
     if (isResumingPausedSession) {
-      setLiveSessionAccessError(null);
       return;
     }
-
-    const didActivate = await activateLiveSessionIfNeeded();
-    if (!didActivate) {
-      camera.stopCamera(
-        "Live training could not start. The preview was closed so your live-session count stays unchanged.",
-      );
-    }
   }, [
-    activateLiveSessionIfNeeded,
     demoSessionExpired,
     getDemoTimeRemainingSnapshot,
-    hasLiveSessionLimitReached,
     isSessionPaused,
     isSetupStage,
     setLiveSessionActiveState,
@@ -4003,13 +3983,7 @@ export default function TrainProcedurePage() {
         <div className="trainer-session-hero-actions">
           <button
             className="button-primary trainer-session-action"
-            disabled={
-              cameraStatus.state === "requesting" ||
-              (!cameraReady &&
-                !isSetupStage &&
-                hasLiveSessionLimitReached &&
-                !isSessionPaused)
-            }
+            disabled={cameraStatus.state === "requesting"}
             onClick={() => void handleCameraToggle()}
             type="button"
           >

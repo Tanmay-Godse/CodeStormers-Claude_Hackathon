@@ -72,6 +72,8 @@ The seeded public judge accounts are still useful for a controlled demo:
 - fixed public student accounts reduce API abuse during judging
 - each account has `10` live sessions
 - quota resets are reserved for admin and developer accounts
+- preview-only camera start does not consume quota; the first real non-setup
+  graded step does
 - new admin reviewer accounts still require developer approval before they can use `/admin/reviews`
 
 ## Post-Deploy Smoke Checklist
@@ -81,8 +83,9 @@ The seeded public judge accounts are still useful for a controlled demo:
 3. Confirm `/dashboard`, `/knowledge`, and `/library` load.
 4. Open `/train/simple-interrupted-suture` and confirm the `Setup` tab loads its preflight checks.
 5. Run `Check Audio` and confirm browser/backend speech diagnostics appear as expected for that environment.
-6. Start a live session and confirm analysis requests reach the backend.
-7. Confirm `FRONTEND_ORIGIN` matches the deployed frontend URL exactly.
+6. Run `Check My Step` once on `Setup` and confirm it stays local and finishes quickly.
+7. Start preview and run the first real non-setup `Check My Step`, then confirm analysis requests reach the backend and quota updates there.
+8. Confirm `FRONTEND_ORIGIN` matches the deployed frontend URL exactly.
 
 ## Related Docs
 

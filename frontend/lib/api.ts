@@ -99,6 +99,16 @@ function toPersistedAuthAccount(
   };
 }
 
+function buildSessionHeaders(payload: {
+  accountId: string;
+  sessionToken: string;
+}): Record<string, string> {
+  return {
+    "X-Account-Id": payload.accountId,
+    "X-Session-Token": payload.sessionToken,
+  };
+}
+
 async function readJson<T>(response: Response): Promise<T> {
   if (!response.ok) {
     const fallbackMessage = `Request failed with status ${response.status}.`;
@@ -164,15 +174,16 @@ export async function generateKnowledgePack(
   return readJson<KnowledgePackResponse>(response);
 }
 
-export async function previewPersistedAuthAccount(
-  identifier: string,
-): Promise<PersistedAuthAccount | null> {
-  const params = new URLSearchParams({ identifier });
-  const response = await fetch(buildApiUrl(`/auth/accounts/preview?${params}`), {
+export async function getCurrentPersistedAuthAccount(payload: {
+  accountId: string;
+  sessionToken: string;
+}): Promise<PersistedAuthAccount | null> {
+  const response = await fetch(buildApiUrl("/auth/session"), {
     cache: "no-store",
+    headers: buildSessionHeaders(payload),
   });
 
-  if (response.status === 404) {
+  if (response.status === 403 || response.status === 404) {
     return null;
   }
 
@@ -240,12 +251,12 @@ export async function listPendingAdminRequests(
   developerAccountId: string,
   developerSessionToken: string,
 ): Promise<PersistedAuthAccount[]> {
-  const params = new URLSearchParams({
-    developer_account_id: developerAccountId,
-    developer_session_token: developerSessionToken,
-  });
-  const response = await fetch(buildApiUrl(`/auth/admin-requests?${params}`), {
+  const response = await fetch(buildApiUrl("/auth/admin-requests"), {
     cache: "no-store",
+    headers: buildSessionHeaders({
+      accountId: developerAccountId,
+      sessionToken: developerSessionToken,
+    }),
   });
 
   const data = await readJson<AuthAccountApiResponse[]>(response);
@@ -294,12 +305,12 @@ export async function listDemoAccounts(
   actorAccountId: string,
   actorSessionToken: string,
 ): Promise<PersistedAuthAccount[]> {
-  const params = new URLSearchParams({
-    actor_account_id: actorAccountId,
-    actor_session_token: actorSessionToken,
-  });
-  const response = await fetch(buildApiUrl(`/auth/demo-accounts?${params}`), {
+  const response = await fetch(buildApiUrl("/auth/demo-accounts"), {
     cache: "no-store",
+    headers: buildSessionHeaders({
+      accountId: actorAccountId,
+      sessionToken: actorSessionToken,
+    }),
   });
 
   const data = await readJson<AuthAccountApiResponse[]>(response);
@@ -350,12 +361,9 @@ export async function getPersistedLearningState(payload: {
   accountId: string;
   sessionToken: string;
 }): Promise<LearningStateSnapshot> {
-  const params = new URLSearchParams({
-    account_id: payload.accountId,
-    session_token: payload.sessionToken,
-  });
-  const response = await fetch(buildApiUrl(`/learning-state?${params}`), {
+  const response = await fetch(buildApiUrl("/learning-state"), {
     cache: "no-store",
+    headers: buildSessionHeaders(payload),
   });
 
   const data = await readJson<LearningStateApiResponse>(response);

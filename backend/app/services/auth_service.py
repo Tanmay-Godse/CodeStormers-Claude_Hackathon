@@ -125,6 +125,38 @@ def preview_auth_account(identifier: str) -> AuthAccountPreview:
     return account
 
 
+def get_authenticated_auth_account(
+    *,
+    actor_account_id: str,
+    actor_session_token: str,
+) -> AuthAccountPreview:
+    account = _authenticate_actor(
+        actor_account_id=actor_account_id,
+        actor_session_token=actor_session_token,
+        allow_any_signed_in=True,
+    )
+    refreshed = _resolve_account_by_id(account.id, include_session_token=True)
+    if refreshed is None:
+        raise AuthAccountNotFoundError(f"Account '{account.id}' was not found.")
+    return refreshed
+
+
+def preview_authenticated_auth_account(
+    *,
+    identifier: str,
+    actor_account_id: str,
+    actor_session_token: str,
+) -> AuthAccountPreview:
+    account = get_authenticated_auth_account(
+        actor_account_id=actor_account_id,
+        actor_session_token=actor_session_token,
+    )
+    normalized_identifier = _validate_identifier(identifier)
+    if normalized_identifier != account.username:
+        raise AuthPermissionError("You can only preview the signed-in account.")
+    return account
+
+
 def create_auth_account(payload: CreateAuthAccountRequest) -> AuthAccountPreview:
     name = payload.name.strip()
     if not name:
@@ -415,6 +447,8 @@ def update_auth_account(
         )
         password_scheme = CURRENT_PASSWORD_SCHEME
 
+    next_session_token = secrets.token_urlsafe(32) if new_password is not None else None
+
     with _connect() as connection:
         try:
             if new_password is not None:
@@ -422,7 +456,8 @@ def update_auth_account(
                     """
                     UPDATE auth_accounts
                     SET name = ?, username = ?, normalized_display_name = ?,
-                        password_hash = ?, password_salt = ?, password_scheme = ?
+                        password_hash = ?, password_salt = ?, password_scheme = ?,
+                        session_token = ?
                     WHERE id = ?
                     """,
                     (
@@ -432,6 +467,7 @@ def update_auth_account(
                         password_hash,
                         password_salt,
                         password_scheme,
+                        next_session_token,
                         account_id,
                     ),
                 )
@@ -502,14 +538,20 @@ def consume_live_session(payload: ConsumeLiveSessionRequest) -> AuthAccountPrevi
         )
 
     with _connect() as connection:
-        connection.execute(
+        result = connection.execute(
             """
             UPDATE auth_accounts
             SET live_session_used = live_session_used + 1
             WHERE id = ?
+              AND live_session_limit IS NOT NULL
+              AND live_session_used < live_session_limit
             """,
             (account.id,),
         )
+        if result.rowcount != 1:
+            raise AuthPermissionError(
+                "This demo account has reached its live-session limit. Please contact an admin or developer to reset it."
+            )
 
     updated = _resolve_account_by_id(account.id, include_session_token=True)
     if updated is None:

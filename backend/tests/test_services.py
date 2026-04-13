@@ -1,11 +1,23 @@
+from concurrent.futures import ThreadPoolExecutor
+
 import pytest
 
+from app.schemas.auth import (
+    ConsumeLiveSessionRequest,
+    CreateAuthAccountRequest,
+)
 from app.schemas.analyze import AnalyzeFrameRequest, SafetyGateResult
 from app.schemas.coach import CoachChatMessage, CoachChatRequest
 from app.schemas.debrief import DebriefRequest, DebriefEvent
 from app.schemas.knowledge import KnowledgePackRequest
 from app.schemas.review import ResolveReviewCaseRequest
-from app.services import analysis_service, coach_service, debrief_service, knowledge_service
+from app.services import (
+    analysis_service,
+    auth_service,
+    coach_service,
+    debrief_service,
+    knowledge_service,
+)
 from app.services.ai_client import AIRequestError, AIResponseError
 from app.services import review_queue_service, safety_service
 
@@ -162,6 +174,55 @@ def test_analysis_service_accepts_setup_when_simulation_surface_is_cleared(monke
     assert response.issues == []
     assert response.overlay_target_ids == ["surface_center"]
     assert "setup looks ready" in response.coaching_message.lower()
+
+
+def test_live_session_consume_is_atomic_under_concurrency(tmp_path, monkeypatch) -> None:
+    db_path = tmp_path / "auth.db"
+    monkeypatch.setattr(auth_service, "AUTH_DB_PATH", db_path)
+
+    created = auth_service.create_auth_account(
+        CreateAuthAccountRequest(
+            name="Student Prime",
+            username="student.prime",
+            password="supersecure",
+            role="student",
+        )
+    )
+
+    with auth_service._connect() as connection:
+        connection.execute(
+            """
+            UPDATE auth_accounts
+            SET live_session_limit = 1, live_session_used = 0
+            WHERE id = ?
+            """,
+            (created.id,),
+        )
+
+    payload = ConsumeLiveSessionRequest(
+        account_id=created.id,
+        session_token=created.session_token or "",
+    )
+
+    def consume_once() -> str:
+        try:
+            auth_service.consume_live_session(payload)
+        except auth_service.AuthPermissionError:
+            return "blocked"
+        return "consumed"
+
+    with ThreadPoolExecutor(max_workers=2) as executor:
+        outcomes = list(executor.map(lambda _: consume_once(), range(2)))
+
+    updated = auth_service.get_authenticated_auth_account(
+        actor_account_id=created.id,
+        actor_session_token=created.session_token or "",
+    )
+
+    assert outcomes.count("consumed") == 1
+    assert outcomes.count("blocked") == 1
+    assert updated.live_session_used == 1
+    assert updated.live_session_remaining == 0
 
 
 def test_debrief_service_falls_back_when_ai_request_fails(monkeypatch) -> None:

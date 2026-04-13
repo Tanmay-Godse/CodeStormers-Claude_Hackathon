@@ -2,9 +2,9 @@ import { createDefaultCalibration } from "@/lib/geometry";
 import {
   consumeLiveSessionAllowance,
   createPersistedAuthAccount,
+  getCurrentPersistedAuthAccount,
   getPersistedLearningState,
   listDemoAccounts,
-  previewPersistedAuthAccount,
   resetDemoAccountQuota,
   savePersistedKnowledgeProgress,
   savePersistedLearningSession,
@@ -319,7 +319,7 @@ function writeKnowledgeProgress(
 
 function toAuthUser(account: PersistedAuthAccount): AuthUser {
   return {
-    id: crypto.randomUUID(),
+    id: account.id,
     accountId: account.id,
     name: account.name,
     username: account.username,
@@ -332,7 +332,7 @@ function toAuthUser(account: PersistedAuthAccount): AuthUser {
     liveSessionUsed: account.liveSessionUsed,
     liveSessionRemaining: account.liveSessionRemaining ?? null,
     sessionToken: account.sessionToken ?? null,
-    createdAt: new Date().toISOString(),
+    createdAt: account.createdAt,
   };
 }
 
@@ -843,7 +843,15 @@ export async function refreshAuthUser(): Promise<AuthUser | null> {
     return null;
   }
 
-  const account = await previewPersistedAuthAccount(currentUser.username);
+  if (!currentUser.sessionToken) {
+    clearAuthUser();
+    return null;
+  }
+
+  const account = await getCurrentPersistedAuthAccount({
+    accountId: currentUser.accountId,
+    sessionToken: currentUser.sessionToken,
+  });
   if (!account) {
     clearAuthUser();
     return null;
@@ -862,7 +870,8 @@ export async function refreshAuthUser(): Promise<AuthUser | null> {
     liveSessionLimit: account.liveSessionLimit ?? null,
     liveSessionUsed: account.liveSessionUsed,
     liveSessionRemaining: account.liveSessionRemaining ?? null,
-    sessionToken: currentUser.sessionToken ?? account.sessionToken ?? null,
+    sessionToken: account.sessionToken ?? currentUser.sessionToken ?? null,
+    createdAt: account.createdAt,
   });
 
   try {
@@ -917,7 +926,8 @@ export async function updateAuthUserProfile(
     liveSessionLimit: account.liveSessionLimit ?? null,
     liveSessionUsed: account.liveSessionUsed,
     liveSessionRemaining: account.liveSessionRemaining ?? null,
-    sessionToken: currentUser.sessionToken ?? account.sessionToken ?? null,
+    sessionToken: account.sessionToken ?? currentUser.sessionToken ?? null,
+    createdAt: account.createdAt,
   });
 
   try {
@@ -927,47 +937,6 @@ export async function updateAuthUserProfile(
   }
 
   return nextUser;
-}
-
-export async function previewAuthAccount(
-  identifier: string,
-): Promise<{
-  name: string;
-  role: AuthUser["role"];
-  username: string;
-  isDeveloper: boolean;
-  isSeeded: boolean;
-  requestedRole?: "admin" | null;
-  adminApprovalStatus: AuthUser["adminApprovalStatus"];
-  liveSessionLimit?: number | null;
-  liveSessionUsed: number;
-  liveSessionRemaining?: number | null;
-} | null> {
-  ensureBrowserStorage();
-
-  const trimmedIdentifier = identifier.trim();
-  if (trimmedIdentifier.length < 3) {
-    throw new Error("Enter the username for this workspace account.");
-  }
-
-  const account = await previewPersistedAuthAccount(trimmedIdentifier);
-
-  if (!account) {
-    return null;
-  }
-
-  return {
-    name: account.name,
-    role: account.role,
-    username: account.username,
-    isDeveloper: account.isDeveloper,
-    isSeeded: account.isSeeded,
-    requestedRole: account.requestedRole ?? null,
-    adminApprovalStatus: account.adminApprovalStatus,
-    liveSessionLimit: account.liveSessionLimit ?? null,
-    liveSessionUsed: account.liveSessionUsed,
-    liveSessionRemaining: account.liveSessionRemaining ?? null,
-  };
 }
 
 export async function consumeAuthLiveSession(): Promise<AuthUser> {
@@ -996,7 +965,8 @@ export async function consumeAuthLiveSession(): Promise<AuthUser> {
     liveSessionLimit: account.liveSessionLimit ?? null,
     liveSessionUsed: account.liveSessionUsed,
     liveSessionRemaining: account.liveSessionRemaining ?? null,
-    sessionToken: currentUser.sessionToken ?? account.sessionToken ?? null,
+    sessionToken: account.sessionToken ?? currentUser.sessionToken ?? null,
+    createdAt: account.createdAt,
   });
 }
 
@@ -1053,11 +1023,12 @@ export async function resetManagedDemoAccountQuota(
       isSeeded: account.isSeeded,
       requestedRole: account.requestedRole ?? null,
       adminApprovalStatus: account.adminApprovalStatus,
-      liveSessionLimit: account.liveSessionLimit ?? null,
-      liveSessionUsed: account.liveSessionUsed,
-      liveSessionRemaining: account.liveSessionRemaining ?? null,
-      sessionToken: currentUser.sessionToken ?? account.sessionToken ?? null,
-    });
+    liveSessionLimit: account.liveSessionLimit ?? null,
+    liveSessionUsed: account.liveSessionUsed,
+    liveSessionRemaining: account.liveSessionRemaining ?? null,
+    sessionToken: account.sessionToken ?? currentUser.sessionToken ?? null,
+    createdAt: account.createdAt,
+  });
   }
 
   return {

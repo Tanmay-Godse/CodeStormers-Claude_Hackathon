@@ -107,7 +107,7 @@ Public demo behavior:
 - self-service student accounts also start with the standard `10` live sessions
 - new admin reviewer accounts start in the student workspace with a pending admin access request
 - each seeded public student account has `10` live sessions
-- the live-session allowance is consumed when a camera run starts
+- the live-session allowance is consumed when the first real non-setup training step begins
 - only admin or developer accounts can reset seeded-account limits
 
 ## 4. Understand The Trainer Setup Flow
@@ -126,8 +126,9 @@ audio-diagnostic, and image-analysis actions:
   tries Browser STT first. If backend transcription is ready, it also captures
   one backend comparison sample and shows both result cards in the footer.
 - `Check My Step`:
-  runs frame analysis for the current stage. Setup no longer auto-passes just
-  because the camera starts.
+  runs the current stage check. On `Setup`, it runs a local preflight that can
+  briefly open camera and microphone permissions without starting a counted
+  live session. On later stages, it runs frame analysis.
 - session controls:
   `Pause Session` keeps the current run state and remaining time, while
   `End Session` closes the current run cleanly.
@@ -142,15 +143,16 @@ audio-diagnostic, and image-analysis actions:
 3. Open `/train/simple-interrupted-suture`.
 4. Stay on the `Setup` tab and confirm the preflight checks load.
 5. Run `Check Audio`, speak one short sentence, and confirm the footer shows Browser STT plus Backend Transcribe results when backend transcription is configured.
-6. Start the camera.
-7. Allow camera and microphone permissions if the browser asks.
-8. Frame a clearly visible simulated surface such as any fruit or foam pad.
-9. Use `Check My Step` to grade the setup stage.
-10. Confirm the trainer shows the current stage, voice-coach status, and the `2-minute` session timer.
-11. Optionally test `Pause Session` and `End Session` so the live controls are confirmed before a demo.
-12. Open the generated review from the session flow.
-13. Visit `/knowledge` and `/library` to confirm the supporting surfaces load.
-14. Refresh `/dashboard` or `/review/[sessionId]` and confirm the session history rehydrates from the backend.
+6. Run `Check My Step` once on `Setup` and confirm the local preflight finishes quickly.
+7. If prompted, allow camera and microphone permissions.
+8. Confirm the setup check closes the preview again and does not consume a live-session allowance.
+9. Start camera preview for the first real non-setup stage.
+10. Frame a clearly visible simulated surface such as any fruit or foam pad.
+11. Use `Check My Step` on a non-setup stage and confirm the trainer starts the counted live session, analysis, and timer there.
+12. Optionally test `Pause Session` and `End Session` so the live controls are confirmed before a demo.
+13. Open the generated review from the session flow.
+14. Visit `/knowledge` and `/library` to confirm the supporting surfaces load.
+15. Refresh `/dashboard` or `/review/[sessionId]` and confirm the session history rehydrates from the backend.
 
 ## 6. Quick Checks
 

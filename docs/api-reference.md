@@ -66,18 +66,22 @@ Returns the procedure metadata that drives the trainer and library.
 
 ## Auth
 
-### `GET /auth/accounts/preview`
+### `GET /auth/session`
 
-Looks up an existing account by username.
+Returns the currently signed-in account.
 
-Query params:
+Headers:
 
-- `identifier`
+- `X-Account-Id`
+- `X-Session-Token`
 
 Example:
 
 ```bash
-curl "http://localhost:8001/api/v1/auth/accounts/preview?identifier=student.prime"
+curl \
+  -H "X-Account-Id: account-demo-student-1" \
+  -H "X-Session-Token: ..." \
+  "http://localhost:8001/api/v1/auth/session"
 ```
 
 Response fields include:
@@ -91,11 +95,26 @@ Response fields include:
 - `live_session_limit`
 - `live_session_used`
 - `live_session_remaining`
-- `session_token` which is `null` before sign-in
+- `session_token`
+
+### `GET /auth/accounts/preview`
+
+Returns a preview only for the signed-in account itself.
+
+Headers:
+
+- `X-Account-Id`
+- `X-Session-Token`
+
+Query params:
+
+- `identifier`
 
 Behavior:
 
-- unknown usernames return `404`
+- the `identifier` must match the signed-in account username
+- other usernames return `403`
+- this route is no longer a public username lookup endpoint
 
 ### `POST /auth/sign-in`
 
@@ -145,10 +164,10 @@ In this build:
 
 Lists seeded non-developer demo accounts for quota management.
 
-Query params:
+Headers:
 
-- `actor_account_id`
-- `actor_session_token`
+- `X-Account-Id`
+- `X-Session-Token`
 
 Access:
 
@@ -156,7 +175,7 @@ Access:
 
 ### `POST /auth/live-sessions/consume`
 
-Consumes one live session when a camera run starts.
+Consumes one live session when a real graded live-training run begins.
 
 Request:
 
@@ -194,16 +213,21 @@ Access:
 These routes are developer-only approval controls for pending admin reviewer
 requests.
 
+For `GET /auth/admin-requests`, use:
+
+- `X-Account-Id`
+- `X-Session-Token`
+
 ## Learning State
 
 ### `GET /learning-state`
 
 Returns the signed-in learner's synced state snapshot.
 
-Query params:
+Headers:
 
-- `account_id`
-- `session_token`
+- `X-Account-Id`
+- `X-Session-Token`
 
 Response fields:
 
@@ -239,6 +263,8 @@ Notes:
 - the backend normalizes `ownerUsername` to the authenticated account
 - `make_active` is optional and defaults to `false`
 - a learner cannot reuse another account's `session_id`
+- only the `GET /learning-state` route uses auth headers; the write routes still
+  carry `account_id` and `session_token` in the JSON body
 
 ### `PUT /learning-state/knowledge-progress`
 

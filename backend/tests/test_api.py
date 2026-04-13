@@ -62,6 +62,13 @@ def configure_private_seed_accounts(monkeypatch) -> None:
     monkeypatch.setenv("PRIVATE_SEED_ACCOUNTS_JSON", PRIVATE_SEED_ACCOUNTS)
 
 
+def auth_headers(account: dict[str, object]) -> dict[str, str]:
+    return {
+        "X-Account-Id": str(account["id"]),
+        "X-Session-Token": str(account["session_token"]),
+    }
+
+
 def test_private_seed_accounts_can_load_from_backend_env_file(
     tmp_path,
     monkeypatch,
@@ -101,21 +108,8 @@ def test_health_route() -> None:
     )
 
 
-def test_demo_student_account_preview_and_sign_in(tmp_path, monkeypatch) -> None:
+def test_demo_student_account_sign_in_and_session_refresh(tmp_path, monkeypatch) -> None:
     monkeypatch.setattr(auth_service, "AUTH_DB_PATH", tmp_path / "auth.db")
-
-    preview_response = client.get(
-        "/api/v1/auth/accounts/preview",
-        params={"identifier": "Student_1@gmail.com"},
-    )
-
-    assert preview_response.status_code == 200
-    preview = preview_response.json()
-    assert preview["username"] == "student_1@gmail.com"
-    assert preview["role"] == "student"
-    assert preview["live_session_limit"] == 10
-    assert preview["live_session_remaining"] == 10
-    assert preview["session_token"] is None
 
     sign_in_response = client.post(
         "/api/v1/auth/sign-in",
@@ -133,22 +127,23 @@ def test_demo_student_account_preview_and_sign_in(tmp_path, monkeypatch) -> None
     assert signed_in["live_session_used"] == 0
     assert signed_in["live_session_remaining"] == 10
 
+    session_response = client.get(
+        "/api/v1/auth/session",
+        headers=auth_headers(signed_in),
+    )
+
+    assert session_response.status_code == 200
+    session_account = session_response.json()
+    assert session_account["username"] == "student_1@gmail.com"
+    assert session_account["role"] == "student"
+    assert session_account["live_session_limit"] == 10
+    assert session_account["live_session_remaining"] == 10
+    assert session_account["session_token"] == signed_in["session_token"]
+
 
 def test_fixed_developer_account_is_seeded_and_reserved(tmp_path, monkeypatch) -> None:
     configure_private_seed_accounts(monkeypatch)
     monkeypatch.setattr(auth_service, "AUTH_DB_PATH", tmp_path / "auth.db")
-
-    preview_response = client.get(
-        "/api/v1/auth/accounts/preview",
-        params={"identifier": "developer@gmail.com"},
-    )
-
-    assert preview_response.status_code == 200
-    preview = preview_response.json()
-    assert preview["username"] == "developer@gmail.com"
-    assert preview["role"] == "admin"
-    assert preview["is_developer"] is True
-    assert preview["live_session_limit"] is None
 
     sign_in_response = client.post(
         "/api/v1/auth/sign-in",
@@ -159,7 +154,20 @@ def test_fixed_developer_account_is_seeded_and_reserved(tmp_path, monkeypatch) -
     )
 
     assert sign_in_response.status_code == 200
-    assert sign_in_response.json()["is_developer"] is True
+    signed_in = sign_in_response.json()
+    assert signed_in["is_developer"] is True
+
+    session_response = client.get(
+        "/api/v1/auth/session",
+        headers=auth_headers(signed_in),
+    )
+
+    assert session_response.status_code == 200
+    preview = session_response.json()
+    assert preview["username"] == "developer@gmail.com"
+    assert preview["role"] == "admin"
+    assert preview["is_developer"] is True
+    assert preview["live_session_limit"] is None
 
     create_response = client.post(
         "/api/v1/auth/accounts",
@@ -200,12 +208,12 @@ def test_self_service_student_account_can_be_created_and_signed_in(
     assert created["live_session_limit"] == 10
     assert created["live_session_remaining"] == 10
 
-    preview_response = client.get(
-        "/api/v1/auth/accounts/preview",
-        params={"identifier": "student.prime"},
+    session_response = client.get(
+        "/api/v1/auth/session",
+        headers=auth_headers(created),
     )
-    assert preview_response.status_code == 200
-    assert preview_response.json()["username"] == "student.prime"
+    assert session_response.status_code == 200
+    assert session_response.json()["username"] == "student.prime"
 
     sign_in_response = client.post(
         "/api/v1/auth/sign-in",
@@ -311,16 +319,6 @@ def test_internal_admin_account_is_seeded_and_can_sign_in(tmp_path, monkeypatch)
     configure_private_seed_accounts(monkeypatch)
     monkeypatch.setattr(auth_service, "AUTH_DB_PATH", tmp_path / "auth.db")
 
-    preview_response = client.get(
-        "/api/v1/auth/accounts/preview",
-        params={"identifier": "tanmay@gmail.com"},
-    )
-
-    assert preview_response.status_code == 200
-    preview = preview_response.json()
-    assert preview["role"] == "admin"
-    assert preview["live_session_limit"] == 10
-
     sign_in_response = client.post(
         "/api/v1/auth/sign-in",
         json={
@@ -331,8 +329,19 @@ def test_internal_admin_account_is_seeded_and_can_sign_in(tmp_path, monkeypatch)
     )
 
     assert sign_in_response.status_code == 200
-    assert sign_in_response.json()["username"] == "tanmay@gmail.com"
-    assert sign_in_response.json()["session_token"]
+    signed_in = sign_in_response.json()
+    assert signed_in["username"] == "tanmay@gmail.com"
+    assert signed_in["session_token"]
+
+    session_response = client.get(
+        "/api/v1/auth/session",
+        headers=auth_headers(signed_in),
+    )
+
+    assert session_response.status_code == 200
+    preview = session_response.json()
+    assert preview["role"] == "admin"
+    assert preview["live_session_limit"] == 10
 
 
 def test_live_session_limit_can_be_consumed_and_reset_by_admin(tmp_path, monkeypatch) -> None:
@@ -373,10 +382,7 @@ def test_live_session_limit_can_be_consumed_and_reset_by_admin(tmp_path, monkeyp
 
     list_response = client.get(
         "/api/v1/auth/demo-accounts",
-        params={
-            "actor_account_id": admin["id"],
-            "actor_session_token": admin["session_token"],
-        },
+        headers=auth_headers(admin),
     )
     assert list_response.status_code == 200
     listed_student = next(
@@ -397,16 +403,41 @@ def test_live_session_limit_can_be_consumed_and_reset_by_admin(tmp_path, monkeyp
     assert reset_response.json()["live_session_remaining"] == 10
 
 
-def test_unknown_demo_username_returns_not_found(tmp_path, monkeypatch) -> None:
+def test_authenticated_preview_only_allows_the_signed_in_account(
+    tmp_path,
+    monkeypatch,
+) -> None:
     monkeypatch.setattr(auth_service, "AUTH_DB_PATH", tmp_path / "auth.db")
+    sign_in_response = client.post(
+        "/api/v1/auth/sign-in",
+        json={
+            "identifier": "student_1@gmail.com",
+            "password": "Qwerty@123",
+            "role": "student",
+        },
+    )
+    assert sign_in_response.status_code == 200
+    student = sign_in_response.json()
 
-    preview_response = client.get(
+    own_preview_response = client.get(
         "/api/v1/auth/accounts/preview",
-        params={"identifier": "unknown.user@gmail.com"},
+        params={"identifier": "student_1@gmail.com"},
+        headers=auth_headers(student),
     )
 
-    assert preview_response.status_code == 404
-    assert "no workspace account" in preview_response.json()["detail"].lower()
+    assert own_preview_response.status_code == 200
+    assert own_preview_response.json()["username"] == "student_1@gmail.com"
+
+    other_preview_response = client.get(
+        "/api/v1/auth/accounts/preview",
+        params={"identifier": "student_2@gmail.com"},
+        headers=auth_headers(student),
+    )
+
+    assert other_preview_response.status_code == 403
+    assert "only preview the signed-in account" in other_preview_response.json()[
+        "detail"
+    ].lower()
 
 
 def test_auth_sign_in_upgrades_legacy_sha256_hash(tmp_path, monkeypatch) -> None:
@@ -490,8 +521,11 @@ def test_auth_update_account_changes_profile_and_password(tmp_path, monkeypatch)
                 password_scheme,
                 role,
                 is_seeded,
+                live_session_limit,
+                live_session_used,
+                session_token,
                 created_at
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 "account-manual-student",
@@ -507,6 +541,9 @@ def test_auth_update_account_changes_profile_and_password(tmp_path, monkeypatch)
                 auth_service.CURRENT_PASSWORD_SCHEME,
                 "student",
                 0,
+                10,
+                0,
+                "session-token-before-change",
                 "2026-03-21T00:00:00+00:00",
             ),
         )
@@ -527,6 +564,8 @@ def test_auth_update_account_changes_profile_and_password(tmp_path, monkeypatch)
     updated = update_response.json()
     assert updated["name"] == "Student Prime"
     assert updated["username"] == "student.prime"
+    assert updated["session_token"]
+    assert updated["session_token"] != "session-token-before-change"
 
     old_sign_in = client.post(
         "/api/v1/auth/sign-in",
@@ -537,6 +576,25 @@ def test_auth_update_account_changes_profile_and_password(tmp_path, monkeypatch)
         },
     )
     assert old_sign_in.status_code == 404
+
+    old_session_response = client.get(
+        "/api/v1/auth/session",
+        headers={
+            "X-Account-Id": account_id,
+            "X-Session-Token": "session-token-before-change",
+        },
+    )
+    assert old_session_response.status_code == 403
+
+    new_session_response = client.get(
+        "/api/v1/auth/session",
+        headers={
+            "X-Account-Id": account_id,
+            "X-Session-Token": updated["session_token"],
+        },
+    )
+    assert new_session_response.status_code == 200
+    assert new_session_response.json()["username"] == "student.prime"
 
     with sqlite3.connect(db_path) as connection:
         row = connection.execute(
@@ -647,10 +705,7 @@ def test_learning_state_round_trip_persists_sessions_and_progress(
 
     snapshot_response = client.get(
         "/api/v1/learning-state",
-        params={
-            "account_id": student["id"],
-            "session_token": student["session_token"],
-        },
+        headers=auth_headers(student),
     )
     assert snapshot_response.status_code == 200
     snapshot = snapshot_response.json()
@@ -857,10 +912,7 @@ def test_learning_state_make_active_must_be_explicit(
 
     snapshot_response = client.get(
         "/api/v1/learning-state",
-        params={
-            "account_id": student["id"],
-            "session_token": student["session_token"],
-        },
+        headers=auth_headers(student),
     )
     assert snapshot_response.status_code == 200
     assert snapshot_response.json()["active_session_ids"] == {
@@ -947,10 +999,7 @@ def test_learning_state_snapshot_normalizes_stale_stored_username(
 
     snapshot_response = client.get(
         "/api/v1/learning-state",
-        params={
-            "account_id": student["id"],
-            "session_token": student["session_token"],
-        },
+        headers=auth_headers(student),
     )
     assert snapshot_response.status_code == 200
     snapshot = snapshot_response.json()
