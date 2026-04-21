@@ -225,11 +225,26 @@ export type AnalyzeFrameRequest = {
   equity_mode: ApiEquityMode;
 };
 
+export type AnalyzeLiveFrameRequest = AnalyzeFrameRequest & {
+  force_refresh?: boolean;
+  min_analysis_interval_ms?: number;
+  state_window_ms?: number;
+};
+
 export type SafetyGateResult = {
   status: SafetyGateStatus;
   confidence: number;
   reason: string;
   refusal_message?: string | null;
+};
+
+export type TemporalAnalysisState = {
+  analysis_source: "fresh" | "cached" | "smoothed";
+  dominant_step_status: StepStatus;
+  recent_analysis_count: number;
+  stability: number;
+  analysis_window_ms: number;
+  next_recommended_check_ms: number;
 };
 
 export type AnalyzeFrameResponse = {
@@ -248,6 +263,7 @@ export type AnalyzeFrameResponse = {
   requires_human_review: boolean;
   human_review_reason?: string | null;
   review_case_id?: string | null;
+  temporal_state?: TemporalAnalysisState | null;
 };
 
 export type SessionEvent = {

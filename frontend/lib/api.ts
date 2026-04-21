@@ -3,6 +3,7 @@ import type {
   AdminRequestDecisionInput,
   AnalyzeFrameRequest,
   AnalyzeFrameResponse,
+  AnalyzeLiveFrameRequest,
   CreateAuthAccountInput,
   CoachChatRequest,
   CoachChatResponse,
@@ -425,6 +426,21 @@ export async function analyzeFrame(
   payload: AnalyzeFrameRequest,
 ): Promise<AnalyzeFrameResponse> {
   const response = await fetch(buildApiUrl("/analyze-frame"), {
+    body: JSON.stringify(payload),
+    cache: "no-store",
+    headers: {
+      "Content-Type": "application/json",
+    },
+    method: "POST",
+  });
+
+  return readJson<AnalyzeFrameResponse>(response);
+}
+
+export async function analyzeLiveFrame(
+  payload: AnalyzeLiveFrameRequest,
+): Promise<AnalyzeFrameResponse> {
+  const response = await fetch(buildApiUrl("/analyze-live-frame"), {
     body: JSON.stringify(payload),
     cache: "no-store",
     headers: {

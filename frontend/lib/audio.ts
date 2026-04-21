@@ -466,14 +466,37 @@ function normalizeMicrophoneError(error: unknown): string {
   return "Voice recording could not start.";
 }
 
-function normalizeSpeechRecognitionError(errorCode: string | null | undefined): string | null {
-  switch ((errorCode ?? "").trim()) {
+function normalizeSpeechRecognitionError(
+  errorCode: string | null | undefined,
+  eventMessage?: string | null,
+): string | null {
+  const normalizedCode = (errorCode ?? "").trim();
+  const normalizedEventMessage = eventMessage?.trim() ?? "";
+
+  switch (normalizedCode) {
+    case "aborted":
+    case "no-speech":
+      return null;
     case "not-allowed":
     case "service-not-allowed":
       return "Microphone access was blocked. Allow microphone access and try again.";
     case "audio-capture":
       return "No microphone was found on this device.";
+    case "network":
+      return "Browser speech recognition could not reach its recognition service. Your microphone may still be ready. Check your internet connection and try again.";
+    case "language-not-supported":
+      return "Browser speech recognition does not support the selected language.";
+    case "bad-grammar":
+      return "Browser speech recognition rejected the request because of an invalid recognition grammar.";
     default:
+      if (normalizedEventMessage) {
+        return normalizedEventMessage;
+      }
+
+      if (normalizedCode) {
+        return `Browser speech recognition could not continue (${normalizedCode}).`;
+      }
+
       return null;
   }
 }
@@ -1021,7 +1044,10 @@ function startBrowserSpeechRecognition(
   };
 
   recognition.onerror = (event) => {
-    const normalizedMessage = normalizeSpeechRecognitionError(event.error);
+    const normalizedMessage = normalizeSpeechRecognitionError(
+      event.error,
+      event.message,
+    );
     if (normalizedMessage) {
       errorMessage = normalizedMessage;
       return;

@@ -31,6 +31,7 @@ def generate_knowledge_pack(payload: KnowledgePackRequest) -> KnowledgePackRespo
             system_prompt=_build_knowledge_system_prompt(payload, procedure),
             user_content=_build_knowledge_user_content(payload, procedure),
             output_schema=KnowledgePackResponse.model_json_schema(),
+            model_role="learning",
         )
     except (AIConfigurationError, AIRequestError, AIResponseError):
         return fallback_response

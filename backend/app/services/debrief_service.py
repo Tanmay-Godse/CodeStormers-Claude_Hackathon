@@ -224,6 +224,7 @@ def generate_session_debrief(payload: DebriefRequest) -> DebriefResponse:
                 practice_surface=procedure.practice_surface,
             ),
             output_schema=DebriefResponse.model_json_schema(),
+            model_role="debrief",
         )
     except (AIConfigurationError, AIRequestError, AIResponseError):
         return fallback_response

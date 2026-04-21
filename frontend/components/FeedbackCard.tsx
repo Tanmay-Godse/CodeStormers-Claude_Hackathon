@@ -117,14 +117,27 @@ export function FeedbackCard({
         <div className="feedback-block">
           <strong>{stageTitle}</strong>
           <p className="feedback-copy">
-            No result yet. Turn on the camera, frame the practice surface, and click{" "}
-            <em>Check My Step</em>.
+            No result yet. Turn on the camera, frame the practice surface, and let the
+            live monitor settle or click <em>Check My Step</em>.
           </p>
         </div>
       ) : null}
 
       {response ? (
         <div className="feedback-card">
+          {response.temporal_state ? (
+            <div className="feedback-block">
+              <div className="feedback-header">
+                <strong>Live monitor state</strong>
+                <span className="pill">{response.temporal_state.analysis_source}</span>
+              </div>
+              <p className="feedback-copy" style={{ marginTop: 12 }}>
+                Stability {Math.round(response.temporal_state.stability * 100)}% across{" "}
+                {response.temporal_state.recent_analysis_count} recent analysis window(s).
+              </p>
+            </div>
+          ) : null}
+
           {response.analysis_mode === "blocked" ? (
             <div className="feedback-block">
               <div className="feedback-header">

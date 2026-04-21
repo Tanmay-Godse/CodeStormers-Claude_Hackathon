@@ -5,6 +5,7 @@ It assumes you are starting from the repo root.
 
 ## What You Will Run
 
+- local model server: `http://localhost:8000`
 - frontend: `http://localhost:3000`
 - backend: `http://localhost:8001`
 - first page to open: `http://localhost:3000/login`
@@ -16,12 +17,39 @@ It assumes you are starting from the repo root.
 - `Python 3.10+`
 - `micromamba` with your environment available
 - a browser with camera and microphone support
+- `capstone` micromamba env with `vllm`
+- `hackathon` micromamba env for the backend
 
 The commands below use `micromamba run -n <your env>` so the backend always uses
 the intended Python environment. If you already ran `micromamba activate
 <your env>`, the same commands also work without that prefix.
 
-## 1. Start The Backend
+## 1. Start The Local Model Server
+
+```bash
+cd backend
+LOCAL_VLLM_KEY=$(/home/tanmay-godse/micromamba/envs/hackathon/bin/python - <<'PY'
+from dotenv import dotenv_values
+print(dotenv_values('.env').get('AI_API_KEY', 'local-vllm-key'))
+PY
+)
+
+micromamba run -n capstone vllm serve \
+  /home/tanmay-godse/.cache/huggingface/hub/models--Qwen--Qwen2.5-VL-3B-Instruct/snapshots/66285546d2b821cf421d4f5eb2576359d3770cd3 \
+  --served-model-name Qwen/Qwen2.5-VL-3B-Instruct \
+  --host 127.0.0.1 \
+  --port 8000 \
+  --api-key "$LOCAL_VLLM_KEY" \
+  --gpu-memory-utilization 0.85 \
+  --max-model-len 4096 \
+  --limit-mm-per-prompt '{"image":1}'
+```
+
+This repo now defaults to local vLLM on `localhost:8000` as the primary model
+path. The command above reuses the bearer token already configured as
+`AI_API_KEY` in `backend/.env`, so the backend and vLLM stay aligned.
+
+## 2. Start The Backend
 
 ```bash
 cd backend
@@ -29,27 +57,23 @@ micromamba run -n <your env> pip install -r requirements.txt
 cp .env.example .env
 ```
 
-Before launching the backend, update `backend/.env` with real secrets:
+Before launching the backend, update `backend/.env` only if you need to change
+the checked-in local defaults:
 
-- choose one main AI provider setup in [cloud-keys.md](cloud-keys.md)
-- `AI_API_KEY`: real key for the selected main AI provider
+- `AI_API_KEY`: bearer token the backend will send to the local vLLM server
+- `AI_FALLBACK_API_KEY`: optional real Anthropic key if you want cloud fallback
 - `TRANSCRIPTION_API_KEY`: real OpenAI key for learner speech transcription
 - `FRONTEND_ORIGIN`: keep as `http://localhost:3000` for local development
 - `PRIVATE_SEED_ACCOUNTS_JSON`: optional private admin or developer accounts for internal use only
 
-The checked-in `.env.example` already contains the current demo defaults for the
-Anthropic-main setup plus a commented OpenAI-main example. Use
-[cloud-keys.md](cloud-keys.md) for the exact copy-paste blocks.
-
-For local development, the simplest path is now the recommended one: put your
-real keys in `backend/.env` and run the backend. Real key values in that file
-take priority over stale shell-exported secrets. If you change a key, restart
-the backend.
+The checked-in `.env.example` now defaults to local vLLM on `localhost:8000`
+with optional Anthropic fallback. Use [cloud-keys.md](cloud-keys.md) only if
+you want to swap the stack back to a cloud-first setup.
 
 Run the backend:
 
 ```bash
-micromamba run -n <your env> uvicorn app.main:app --reload --reload-dir app --port 8001
+micromamba run -n hackathon uvicorn app.main:app --reload --reload-dir app --port 8001
 ```
 
 On first startup, the backend creates or refreshes the seeded public demo
@@ -60,7 +84,7 @@ Using `--reload-dir app` keeps Uvicorn watching only the backend source folder.
 That avoids file-watch permission issues that can happen when reload mode tries
 to scan your whole home directory.
 
-## 2. Start The Frontend
+## 3. Start The Frontend
 
 ```bash
 cd frontend
@@ -82,7 +106,7 @@ npm run dev
 
 If you change `NEXT_PUBLIC_API_BASE_URL`, restart the frontend dev server.
 
-## 3. Sign In To The Demo
+## 4. Sign In To The Demo
 
 Open:
 
@@ -110,7 +134,7 @@ Public demo behavior:
 - the live-session allowance is consumed when the first real non-setup training step begins
 - only admin or developer accounts can reset seeded-account limits
 
-## 4. Understand The Trainer Setup Flow
+## 5. Understand The Trainer Setup Flow
 
 Before you run a graded step, the live trainer now separates setup,
 audio-diagnostic, and image-analysis actions:
@@ -136,7 +160,7 @@ audio-diagnostic, and image-analysis actions:
   the trainer tries browser speech playback first and falls back to backend TTS
   when browser playback does not actually start.
 
-## 5. Run The Main Smoke Flow
+## 6. Run The Main Smoke Flow
 
 1. Sign in from `/login`.
 2. Open `/dashboard`.
@@ -154,11 +178,16 @@ audio-diagnostic, and image-analysis actions:
 14. Visit `/knowledge` and `/library` to confirm the supporting surfaces load.
 15. Refresh `/dashboard` or `/review/[sessionId]` and confirm the session history rehydrates from the backend.
 
-## 6. Quick Checks
+## 7. Quick Checks
 
 Backend:
 
 ```bash
+curl -H "Authorization: Bearer $(/home/tanmay-godse/micromamba/envs/hackathon/bin/python - <<'PY'
+from dotenv import dotenv_values
+print(dotenv_values('backend/.env').get('AI_API_KEY', 'local-vllm-key'))
+PY
+)" http://localhost:8000/v1/models
 curl http://localhost:8001/api/v1/health
 curl http://localhost:8001/api/v1/procedures/simple-interrupted-suture
 ```
@@ -187,7 +216,7 @@ Run that only if you intentionally want to clear local accounts, session
 history, Knowledge Lab progress, and persisted review cases before restarting
 the backend.
 
-## 7. Common Issues
+## 8. Common Issues
 
 - Account creation works but admin login is denied:
   that account is still pending developer approval, so sign in through the
@@ -197,10 +226,12 @@ the backend.
 - `ModuleNotFoundError: No module named 'app'` when starting the backend:
   you are probably not inside the `backend/` folder. Run the Uvicorn command
   from `backend/`.
-- `invalid x-api-key` or an Anthropic credential error when the live preview starts:
-  the backend `AI_API_KEY` is missing, placeholder-only, revoked, or wrong.
-- OpenAI-backed analysis fails as soon as the live preview starts:
-  `AI_API_BASE_URL`, `AI_API_KEY`, or the selected OpenAI main model is wrong.
+- Local vLLM returns `401 Unauthorized`:
+  the model server `--api-key` does not match `AI_API_KEY` in `backend/.env`.
+- Local OpenAI-compatible analysis fails as soon as the live preview starts:
+  `AI_API_BASE_URL`, `AI_API_KEY`, or the selected local model id is wrong.
+- Anthropic fallback never engages:
+  `AI_FALLBACK_API_KEY` or the `AI_FALLBACK_*_MODEL` values are missing.
 - Learner voice is not transcribed:
   browser STT may be unavailable in that browser, or the backend
   `TRANSCRIPTION_API_KEY` is missing, placeholder-only, revoked, or wrong. Use
@@ -222,7 +253,7 @@ the backend.
   use `localhost` or `https`, confirm browser permissions, and refresh the
   trainer if the tab was already open before permissions changed.
 
-## 8. Next Docs
+## 9. Next Docs
 
 - [local-setup.md](local-setup.md)
 - [cloud-keys.md](cloud-keys.md)

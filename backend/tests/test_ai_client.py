@@ -348,3 +348,121 @@ def test_send_json_message_auto_detects_anthropic_endpoint(monkeypatch) -> None:
     assert captured["headers"]["x-api-key"] == "test-key"
     assert captured["headers"]["anthropic-version"] == "2023-06-01"
     assert captured["json"]["tools"][0]["name"] == "return_json"
+
+
+def test_send_json_message_falls_back_to_anthropic_when_primary_request_fails(
+    monkeypatch,
+) -> None:
+    primary_calls = []
+    fallback_calls = []
+
+    def fake_post(url, *, headers, json, timeout):
+        if "anthropic.com" in url:
+            fallback_calls.append(json)
+            return FakeResponse(
+                status_code=200,
+                json_data={
+                    "content": [
+                        {
+                            "type": "tool_use",
+                            "input": {"step_status": "pass"},
+                        }
+                    ]
+                },
+            )
+
+        primary_calls.append(json)
+        return FakeResponse(
+            status_code=404,
+            json_data={
+                "error": {
+                    "message": "The requested model is not available on this server.",
+                }
+            },
+        )
+
+    monkeypatch.setattr(ai_client.settings, "ai_provider", "openai")
+    monkeypatch.setattr(ai_client.settings, "ai_api_base_url", "http://localhost:8000/v1")
+    monkeypatch.setattr(ai_client.settings, "ai_api_key", "EMPTY")
+    monkeypatch.setattr(
+        ai_client.settings,
+        "ai_analysis_model",
+        "Qwen/Qwen2.5-VL-3B-Instruct",
+    )
+    monkeypatch.setattr(ai_client.settings, "ai_fallback_provider", "anthropic")
+    monkeypatch.setattr(
+        ai_client.settings,
+        "ai_fallback_api_base_url",
+        "https://api.anthropic.com/v1/messages",
+    )
+    monkeypatch.setattr(ai_client.settings, "ai_fallback_api_key", "anthropic-key")
+    monkeypatch.setattr(
+        ai_client.settings,
+        "ai_fallback_analysis_model",
+        "claude-sonnet-demo",
+    )
+    monkeypatch.setattr(openai_compatible.httpx, "post", fake_post)
+
+    response = ai_client.send_json_message(
+        model=ai_client.settings.ai_analysis_model,
+        max_tokens=128,
+        system_prompt="system",
+        user_content=[{"type": "text", "text": "hello"}],
+        output_schema={"type": "object"},
+        model_role="analysis",
+    )
+
+    assert response == {"step_status": "pass"}
+    assert len(primary_calls) == 1
+    assert len(fallback_calls) == 1
+    assert fallback_calls[0]["model"] == "claude-sonnet-demo"
+
+
+def test_send_json_message_uses_anthropic_fallback_when_primary_model_is_blank(
+    monkeypatch,
+) -> None:
+    captured = {}
+
+    def fake_anthropic_post(url, *, headers, json, timeout):
+        captured["json"] = json
+        return FakeResponse(
+            status_code=200,
+            json_data={
+                "content": [
+                    {
+                        "type": "tool_use",
+                        "input": {"step_status": "retry"},
+                    }
+                ]
+            },
+        )
+
+    monkeypatch.setattr(ai_client.settings, "ai_provider", "openai")
+    monkeypatch.setattr(ai_client.settings, "ai_api_base_url", "http://localhost:8000/v1")
+    monkeypatch.setattr(ai_client.settings, "ai_api_key", "EMPTY")
+    monkeypatch.setattr(ai_client.settings, "ai_analysis_model", "")
+    monkeypatch.setattr(ai_client.settings, "ai_fallback_provider", "anthropic")
+    monkeypatch.setattr(
+        ai_client.settings,
+        "ai_fallback_api_base_url",
+        "https://api.anthropic.com/v1/messages",
+    )
+    monkeypatch.setattr(ai_client.settings, "ai_fallback_api_key", "anthropic-key")
+    monkeypatch.setattr(
+        ai_client.settings,
+        "ai_fallback_analysis_model",
+        "claude-sonnet-demo",
+    )
+    monkeypatch.setattr(anthropic.httpx, "post", fake_anthropic_post)
+
+    response = ai_client.send_json_message(
+        model="",
+        max_tokens=128,
+        system_prompt="system",
+        user_content=[{"type": "text", "text": "hello"}],
+        output_schema={"type": "object"},
+        model_role="analysis",
+    )
+
+    assert response == {"step_status": "retry"}
+    assert captured["json"]["model"] == "claude-sonnet-demo"

@@ -98,8 +98,8 @@ def test_health_route() -> None:
     assert payload["status"] == "ok"
     assert payload["simulation_only"] is True
     assert payload["ai_provider"] == settings.ai_provider
-    assert payload["ai_ready"] is True
-    assert payload["ai_coach_model"] == settings.ai_coach_model
+    assert payload["ai_ready"] is settings.any_ai_ready()
+    assert payload["ai_coach_model"] == settings.ai_health_coach_model()
     assert payload["transcription_ready"] is True
     assert payload["transcription_model"] == settings.transcription_model
     assert (
@@ -1070,6 +1070,65 @@ def test_analyze_route_returns_ai_response(monkeypatch) -> None:
     assert data["step_status"] == "retry"
     assert data["overlay_target_ids"] == ["entry_point", "needle_angle"]
     assert data["score_delta"] == 13
+
+
+def test_live_analyze_route_returns_temporal_state(monkeypatch) -> None:
+    def fake_analyze_live_frame_payload(_payload):
+        return AnalyzeFrameResponse(
+            analysis_mode="coaching",
+            step_status="retry",
+            confidence=0.88,
+            visible_observations=[
+                "needle driver is visible near the target zone",
+                "entry angle looks shallower than ideal",
+            ],
+            issues=[],
+            coaching_message="Keep the target steady while the live monitor confirms the angle.",
+            next_action="Hold the field steady for another moment.",
+            overlay_target_ids=["entry_point"],
+            score_delta=0,
+            safety_gate=SafetyGateResult(
+                status="cleared",
+                confidence=0.98,
+                reason="The image cleared the simulation-only safety screen.",
+                refusal_message=None,
+            ),
+            requires_human_review=False,
+            human_review_reason=None,
+            review_case_id=None,
+            temporal_state={
+                "analysis_source": "smoothed",
+                "dominant_step_status": "retry",
+                "recent_analysis_count": 2,
+                "stability": 0.74,
+                "analysis_window_ms": 1600,
+                "next_recommended_check_ms": 400,
+            },
+        )
+
+    monkeypatch.setattr(
+        analyze_route.live_analysis_service,
+        "analyze_live_frame_payload",
+        fake_analyze_live_frame_payload,
+    )
+
+    response = client.post(
+        "/api/v1/analyze-live-frame",
+        json={
+            "procedure_id": "simple-interrupted-suture",
+            "stage_id": "needle_entry",
+            "skill_level": "beginner",
+            "image_base64": "ZmFrZQ==",
+            "simulation_confirmation": True,
+            "session_id": "session-live-route",
+        },
+    )
+
+    assert response.status_code == 200
+    data = response.json()
+    assert data["step_status"] == "retry"
+    assert data["temporal_state"]["analysis_source"] == "smoothed"
+    assert data["temporal_state"]["recent_analysis_count"] == 2
 
 
 def test_debrief_route_returns_ai_summary(monkeypatch) -> None:

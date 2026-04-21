@@ -14,7 +14,7 @@ current demo build.
 
 - `frontend`: Next.js app with dashboard, trainer, review, knowledge, library, profile, admin, and developer flows
 - `backend`: FastAPI app with auth, AI routing, safety gate, review queue, and TTS
-- `main AI model`: Anthropic by default, with OpenAI-compatible main-provider support
+- `main AI model`: local vLLM by default, with optional Anthropic fallback
 - `speech input`: browser STT first in the trainer, with OpenAI `gpt-4o-mini-transcribe` backend transcription available for diagnostics and fallback
 - `speech output`: browser speech first, with backend TTS fallback
 - `auth persistence`: SQLite at `backend/app/data/auth.db`
@@ -25,9 +25,31 @@ current demo build.
 
 ## Local URLs
 
+- local model server: `http://localhost:8000`
 - frontend: `http://localhost:3000`
 - backend: `http://localhost:8001`
 - backend API base: `http://localhost:8001/api/v1`
+
+## Local Model Server
+
+```bash
+cd backend
+LOCAL_VLLM_KEY=$(/home/tanmay-godse/micromamba/envs/hackathon/bin/python - <<'PY'
+from dotenv import dotenv_values
+print(dotenv_values('.env').get('AI_API_KEY', 'local-vllm-key'))
+PY
+)
+
+micromamba run -n capstone vllm serve \
+  /home/tanmay-godse/.cache/huggingface/hub/models--Qwen--Qwen2.5-VL-3B-Instruct/snapshots/66285546d2b821cf421d4f5eb2576359d3770cd3 \
+  --served-model-name Qwen/Qwen2.5-VL-3B-Instruct \
+  --host 127.0.0.1 \
+  --port 8000 \
+  --api-key "$LOCAL_VLLM_KEY" \
+  --gpu-memory-utilization 0.85 \
+  --max-model-len 4096 \
+  --limit-mm-per-prompt '{"image":1}'
+```
 
 ## Backend Setup
 
@@ -45,25 +67,22 @@ The recommended defaults already live in `backend/.env.example`. After copying
 it, make sure these values are correct for your machine:
 
 - `FRONTEND_ORIGIN=http://localhost:3000`
-- choose one main-provider setup from [cloud-keys.md](cloud-keys.md)
-- `AI_API_KEY`: real key for the selected main provider
+- `AI_API_KEY`: bearer token the backend will send to the local vLLM server
+- `AI_FALLBACK_API_KEY`: optional real Anthropic key if you want cloud fallback
 - `TRANSCRIPTION_API_KEY`: real OpenAI key for learner speech transcription
 - `PRIVATE_SEED_ACCOUNTS_JSON`: optional team-only private admin or developer accounts
 
-Use [cloud-keys.md](cloud-keys.md) for the exact local `backend/.env` blocks for:
+Use [cloud-keys.md](cloud-keys.md) if you want to swap the repo back to a
+cloud-first provider layout. The checked-in local defaults are now:
 
-- Anthropic main AI plus OpenAI transcription
-- OpenAI main AI plus OpenAI transcription
-- shell-exported secrets instead of storing keys in `backend/.env`
-
-For the least confusing local setup, add your real keys directly to
-`backend/.env` and start the server. Real keys in that file take priority over
-old shell-exported values. If you update a key, restart the backend.
+- local vLLM on `localhost:8000` as the primary model path
+- optional Anthropic fallback if the local model is unavailable
+- OpenAI transcription for learner speech diagnostics
 
 Run it:
 
 ```bash
-micromamba run -n <your env> uvicorn app.main:app --reload --reload-dir app --port 8001
+micromamba run -n hackathon uvicorn app.main:app --reload --reload-dir app --port 8001
 ```
 
 ## Frontend Setup
@@ -221,6 +240,11 @@ micromamba run -n <your env> pytest
 Useful smoke checks:
 
 ```bash
+curl -H "Authorization: Bearer $(/home/tanmay-godse/micromamba/envs/hackathon/bin/python - <<'PY'
+from dotenv import dotenv_values
+print(dotenv_values('backend/.env').get('AI_API_KEY', 'local-vllm-key'))
+PY
+)" http://localhost:8000/v1/models
 curl http://localhost:8001/api/v1/health
 curl http://localhost:8001/api/v1/procedures/simple-interrupted-suture
 ```
@@ -234,10 +258,12 @@ curl http://localhost:8001/api/v1/procedures/simple-interrupted-suture
 - Browser STT works inconsistently across browsers:
   use the trainer `Setup` tab and the dedicated `Mic and speech test` area to
   confirm whether browser speech recognition is usable in the current browser.
-- Live preview fails immediately with an Anthropic credential error:
-  `AI_API_KEY` is missing, placeholder-only, revoked, or wrong.
-- Live preview fails immediately with an OpenAI-compatible provider error:
-  verify `AI_PROVIDER`, `AI_API_BASE_URL`, `AI_API_KEY`, and the selected OpenAI model id.
+- Local vLLM returns `401 Unauthorized`:
+  the model server `--api-key` does not match `AI_API_KEY` in `backend/.env`.
+- Live preview fails immediately with a local OpenAI-compatible provider error:
+  verify `AI_PROVIDER`, `AI_API_BASE_URL`, `AI_API_KEY`, and the selected local model id.
+- Anthropic fallback never engages:
+  `AI_FALLBACK_API_KEY` or the `AI_FALLBACK_*_MODEL` values are missing.
 - Frontend is deployed on a different origin:
   update `FRONTEND_ORIGIN` in the backend and restart it.
 - Learner voice is not transcribed:

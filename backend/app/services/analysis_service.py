@@ -23,7 +23,11 @@ from app.services.scoring_service import (
 ANALYSIS_RESPONSE_MAX_TOKENS = 360
 
 
-def analyze_frame_payload(payload: AnalyzeFrameRequest) -> AnalyzeFrameResponse:
+def analyze_frame_payload(
+    payload: AnalyzeFrameRequest,
+    *,
+    monitoring_only: bool = False,
+) -> AnalyzeFrameResponse:
     procedure = load_procedure(payload.procedure_id)
     stage = load_stage(procedure, payload.stage_id)
     safety_gate = safety_service.evaluate_safety_gate(
@@ -33,10 +37,14 @@ def analyze_frame_payload(payload: AnalyzeFrameRequest) -> AnalyzeFrameResponse:
     )
 
     if safety_gate.status != "cleared":
-        review_case = _create_review_case_for_blocked_analysis(
-            payload=payload,
-            stage=stage,
-            safety_gate=safety_gate,
+        review_case = (
+            None
+            if monitoring_only
+            else _create_review_case_for_blocked_analysis(
+                payload=payload,
+                stage=stage,
+                safety_gate=safety_gate,
+            )
         )
         return _build_blocked_analysis_response(
             stage=stage,
@@ -70,12 +78,19 @@ def analyze_frame_payload(payload: AnalyzeFrameRequest) -> AnalyzeFrameResponse:
     )
     coaching_message = analysis_draft.coaching_message.strip()
     next_action = analysis_draft.next_action.strip()
-    grading_decision, grading_reason = _determine_grading_decision(
-        draft=analysis_draft,
-    )
-    requires_human_review, human_review_reason, review_source = _determine_human_review(
-        draft=analysis_draft,
-    )
+    if monitoring_only:
+        grading_decision = "not_graded"
+        grading_reason = (
+            "Continuous live monitoring is advisory until you run Check My Step for a scored attempt."
+        )
+        requires_human_review, human_review_reason, review_source = False, "", ""
+    else:
+        grading_decision, grading_reason = _determine_grading_decision(
+            draft=analysis_draft,
+        )
+        requires_human_review, human_review_reason, review_source = _determine_human_review(
+            draft=analysis_draft,
+        )
     review_case = None
     if requires_human_review:
         review_case = review_queue_service.create_review_case(
@@ -113,7 +128,7 @@ def analyze_frame_payload(payload: AnalyzeFrameRequest) -> AnalyzeFrameResponse:
                 step_status=analysis_draft.step_status,
                 issues=analysis_draft.issues,
             )
-            if grading_decision == "graded"
+            if grading_decision == "graded" and not monitoring_only
             else 0
         ),
         safety_gate=safety_gate,
@@ -139,6 +154,7 @@ def request_stage_analysis(
             stage=stage,
         ),
         output_schema=AnalysisDraft.model_json_schema(),
+        model_role="analysis",
     )
 
     try:

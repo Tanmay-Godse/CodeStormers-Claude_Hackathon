@@ -84,6 +84,7 @@ def generate_coach_turn(payload: CoachChatRequest) -> CoachChatResponse:
                 ),
             ),
             output_schema=CoachChatDraft.model_json_schema(),
+            model_role="coach",
         )
         draft = CoachChatDraft.model_validate(response_data)
     except AIRequestError:

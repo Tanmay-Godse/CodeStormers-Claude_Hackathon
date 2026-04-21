@@ -6,7 +6,12 @@ from app.schemas.auth import (
     ConsumeLiveSessionRequest,
     CreateAuthAccountRequest,
 )
-from app.schemas.analyze import AnalyzeFrameRequest, SafetyGateResult
+from app.schemas.analyze import (
+    AnalyzeFrameRequest,
+    AnalyzeFrameResponse,
+    AnalyzeLiveFrameRequest,
+    SafetyGateResult,
+)
 from app.schemas.coach import CoachChatMessage, CoachChatRequest
 from app.schemas.debrief import DebriefRequest, DebriefEvent
 from app.schemas.knowledge import KnowledgePackRequest
@@ -17,6 +22,7 @@ from app.services import (
     coach_service,
     debrief_service,
     knowledge_service,
+    live_analysis_service,
 )
 from app.services.ai_client import AIRequestError, AIResponseError
 from app.services import review_queue_service, safety_service
@@ -28,6 +34,33 @@ def make_cleared_safety_gate() -> SafetyGateResult:
         confidence=0.97,
         reason="The image cleared the simulation-only safety screen.",
         refusal_message=None,
+    )
+
+
+def make_analysis_response(
+    *,
+    step_status: str = "retry",
+    confidence: float = 0.82,
+    coaching_message: str = "Rotate upward before retrying.",
+    next_action: str = "Capture a second attempt.",
+) -> AnalyzeFrameResponse:
+    return AnalyzeFrameResponse(
+        analysis_mode="coaching",
+        step_status=step_status,
+        confidence=confidence,
+        visible_observations=[
+            "entry zone is visible",
+            "needle angle needs attention",
+        ],
+        issues=[],
+        coaching_message=coaching_message,
+        next_action=next_action,
+        overlay_target_ids=["entry_point"],
+        score_delta=8,
+        safety_gate=make_cleared_safety_gate(),
+        requires_human_review=False,
+        human_review_reason=None,
+        review_case_id=None,
     )
 
 
@@ -174,6 +207,96 @@ def test_analysis_service_accepts_setup_when_simulation_surface_is_cleared(monke
     assert response.issues == []
     assert response.overlay_target_ids == ["surface_center"]
     assert "setup looks ready" in response.coaching_message.lower()
+
+
+def test_live_analysis_service_reuses_cached_result_within_interval(
+    monkeypatch,
+) -> None:
+    live_analysis_service.clear_live_analysis_states()
+    captured_calls: list[AnalyzeLiveFrameRequest] = []
+
+    def fake_analyze_frame_payload(payload, **_kwargs):
+        captured_calls.append(payload)
+        return make_analysis_response()
+
+    monkeypatch.setattr(
+        live_analysis_service.analysis_service,
+        "analyze_frame_payload",
+        fake_analyze_frame_payload,
+    )
+
+    payload = AnalyzeLiveFrameRequest(
+        procedure_id="simple-interrupted-suture",
+        stage_id="needle_entry",
+        skill_level="beginner",
+        image_base64="ZmFrZQ==",
+        simulation_confirmation=True,
+        session_id="session-live-1",
+        min_analysis_interval_ms=5_000,
+        state_window_ms=5_000,
+    )
+
+    first = live_analysis_service.analyze_live_frame_payload(payload)
+    second = live_analysis_service.analyze_live_frame_payload(payload)
+
+    assert len(captured_calls) == 1
+    assert first.temporal_state is not None
+    assert first.temporal_state.analysis_source == "fresh"
+    assert second.temporal_state is not None
+    assert second.temporal_state.analysis_source == "cached"
+    assert second.temporal_state.recent_analysis_count == 1
+
+
+def test_live_analysis_service_smooths_recent_conflicting_results(
+    monkeypatch,
+) -> None:
+    live_analysis_service.clear_live_analysis_states()
+    responses = iter(
+        [
+            make_analysis_response(
+                step_status="retry",
+                confidence=0.92,
+                coaching_message="Lift the wrist slightly before the next bite.",
+                next_action="Hold the entry point steady and retry.",
+            ),
+            make_analysis_response(
+                step_status="pass",
+                confidence=0.51,
+                coaching_message="That one looks acceptable.",
+                next_action="Advance if the field stays stable.",
+            ),
+        ]
+    )
+    clock = iter([1_000, 2_600])
+
+    monkeypatch.setattr(live_analysis_service, "_now_ms", lambda: next(clock))
+    monkeypatch.setattr(
+        live_analysis_service.analysis_service,
+        "analyze_frame_payload",
+        lambda _payload, **_kwargs: next(responses),
+    )
+
+    payload = AnalyzeLiveFrameRequest(
+        procedure_id="simple-interrupted-suture",
+        stage_id="needle_entry",
+        skill_level="beginner",
+        image_base64="ZmFrZQ==",
+        simulation_confirmation=True,
+        session_id="session-live-2",
+        min_analysis_interval_ms=1_000,
+        state_window_ms=5_000,
+    )
+
+    live_analysis_service.analyze_live_frame_payload(payload)
+    smoothed = live_analysis_service.analyze_live_frame_payload(payload)
+
+    assert smoothed.temporal_state is not None
+    assert smoothed.temporal_state.analysis_source == "smoothed"
+    assert smoothed.temporal_state.dominant_step_status == "retry"
+    assert smoothed.temporal_state.recent_analysis_count == 2
+    assert smoothed.step_status == "retry"
+    assert smoothed.grading_decision == "not_graded"
+    assert "blending recent frames" in (smoothed.grading_reason or "").lower()
 
 
 def test_live_session_consume_is_atomic_under_concurrency(tmp_path, monkeypatch) -> None:

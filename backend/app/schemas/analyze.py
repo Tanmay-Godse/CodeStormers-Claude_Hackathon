@@ -40,6 +40,14 @@ class AnalyzeFrameRequest(BaseModel):
     equity_mode: EquityModeConfig = Field(default_factory=EquityModeConfig)
 
 
+class AnalyzeLiveFrameRequest(AnalyzeFrameRequest):
+    model_config = ConfigDict(extra="forbid")
+
+    force_refresh: bool = False
+    min_analysis_interval_ms: int = Field(default=600, ge=250, le=10000)
+    state_window_ms: int = Field(default=5000, ge=1000, le=20000)
+
+
 class SafetyGateResult(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
@@ -47,6 +55,17 @@ class SafetyGateResult(BaseModel):
     confidence: float = Field(ge=0, le=1)
     reason: str
     refusal_message: str | None = None
+
+
+class TemporalAnalysisState(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    analysis_source: Literal["fresh", "cached", "smoothed"]
+    dominant_step_status: Literal["pass", "retry", "unclear", "unsafe"]
+    recent_analysis_count: int = Field(ge=1)
+    stability: float = Field(ge=0, le=1)
+    analysis_window_ms: int = Field(ge=0)
+    next_recommended_check_ms: int = Field(ge=0)
 
 
 class AnalyzeFrameResponse(BaseModel):
@@ -67,6 +86,7 @@ class AnalyzeFrameResponse(BaseModel):
     requires_human_review: bool = False
     human_review_reason: str | None = None
     review_case_id: str | None = None
+    temporal_state: TemporalAnalysisState | None = None
 
 
 class AnalysisDraft(BaseModel):

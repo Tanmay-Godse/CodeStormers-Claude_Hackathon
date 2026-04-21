@@ -74,6 +74,7 @@ def evaluate_safety_gate(
                 stage=stage,
             ),
             output_schema=SafetyGateDraft.model_json_schema(),
+            model_role="analysis",
         )
         draft = SafetyGateDraft.model_validate(response_data)
     except (AIRequestError, AIResponseError, ValidationError):
