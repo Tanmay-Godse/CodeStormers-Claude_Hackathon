@@ -179,6 +179,7 @@ def _build_coach_system_prompt() -> str:
         "If you need to speak again, give one brief check-in, one follow-up question, or one fresh cue. "
         "Use the current stage objective and visible checks to make the coaching turn concrete. "
         "When the learner has just spoken, answer that exact remark first in a natural sentence, then give one immediate next cue for the current stage. "
+        "When latest_user_is_question is true, do not dodge or only repeat the rubric; answer the doubt directly before returning to the live cue. "
         "If a live frame is available, ground the reply in what the learner should show next in that frame so the exchange feels real-time. "
         "Do not sound like a report, debrief, or checklist reader. "
         "If coach_mode is hands_free_startup, greet the learner briefly, mention the current stage by name, "

@@ -37,9 +37,9 @@ Returns:
 {
   "status": "ok",
   "simulation_only": true,
-  "ai_provider": "anthropic",
+  "ai_provider": "openai",
   "ai_ready": true,
-  "ai_coach_model": "claude-sonnet-4-6",
+  "ai_coach_model": "Qwen/Qwen2.5-VL-3B-Instruct",
   "transcription_ready": true,
   "transcription_model": "gpt-4o-mini-transcribe",
   "transcription_api_base_url": "https://api.openai.com/v1"
@@ -48,7 +48,8 @@ Returns:
 
 Important fields:
 
-- `ai_ready`: whether the main AI provider is configured with a real key
+- `ai_ready`: whether the primary local or cloud AI provider is configured with
+  a non-placeholder key and model ids
 - `transcription_ready`: whether the backend transcription path is configured
 - `transcription_model`
 - `transcription_api_base_url`
@@ -422,7 +423,7 @@ Typical response:
 
 Notes:
 
-- the trainer `Setup` tab and `Check Audio` use this route for backend speech diagnostics
+- the trainer `Setup` tab and `Run Preflight` use this route for backend speech diagnostics
 - `latency_ms` measures backend request/provider latency, not local microphone recording time
 - the route returns `503` for missing transcription configuration and `502` for provider/request failures
 

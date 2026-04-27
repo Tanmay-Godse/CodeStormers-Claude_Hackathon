@@ -24,7 +24,7 @@ supportive for learners practicing outside a high-resource lab.
 1. Sign in or create an account.
 2. Start a live session from the dashboard.
 3. Use the `Setup` tab to verify camera, mic, speech, and backend readiness.
-4. Practice on a safe simulated surface and use `Check My Step` when the frame is ready.
+4. Practice on a safe simulated surface and let the trainer auto-check once the frame is steady.
 5. Receive coaching and step-level feedback during the run.
 6. Open the generated review and debrief.
 7. Reinforce weak spots through the Knowledge Lab and procedure library.

@@ -104,7 +104,7 @@ Manual checks:
 
 1. Sign in from the deployed frontend.
 2. Open the trainer `Setup` tab and confirm the preflight checks load.
-3. Run `Check Audio` and confirm backend transcription can be measured when configured.
+3. Click `Run Preflight` and confirm backend transcription can be measured when configured.
 4. Start a live session.
 5. Confirm the backend writes quota and learning-state files under the persistent data mount.
 6. Refresh the browser and confirm the session history rehydrates.

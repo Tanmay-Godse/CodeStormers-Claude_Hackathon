@@ -81,7 +81,7 @@ def analyze_frame_payload(
     if monitoring_only:
         grading_decision = "not_graded"
         grading_reason = (
-            "Continuous live monitoring is advisory until you run Check My Step for a scored attempt."
+            "Continuous live monitoring is advisory until an automatic scored attempt runs."
         )
         requires_human_review, human_review_reason, review_source = False, "", ""
     else:

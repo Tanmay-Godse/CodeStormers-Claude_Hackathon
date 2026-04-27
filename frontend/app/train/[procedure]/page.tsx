@@ -23,8 +23,10 @@ import {
   startBrowserSpeechCapture,
   canUseBrowserSpeechRecognition,
   canUseVoiceRecording,
+  isSpeechPlaybackInProgress,
   primeSpeechPlayback,
   primeVoiceRecordingPermission,
+  speakText,
   speakTextAndWait,
   stopSpeechPlayback,
   startVoiceCapture,
@@ -76,22 +78,24 @@ const DEMO_CAMERA_SESSION_LIMIT_MS = 2 * 60 * 1000;
 const COACH_CONVERSATION_WINDOW = 4;
 const VOICE_RECORDING_MAX_DURATION_MS = 10_000;
 const AUDIO_SHORTCUT_MAX_DURATION_MS = 4_500;
-const LIVE_VOICE_CAPTURE_MAX_DURATION_MS = 2_400;
+const LIVE_VOICE_CAPTURE_MAX_DURATION_MS = 4_500;
 const VOICE_RECORDING_MIN_SPEECH_MS = 220;
-const VOICE_RECORDING_SILENCE_DURATION_MS = 350;
-const VOICE_POST_SPEAK_LISTEN_DELAY_MS = 120;
+const VOICE_RECORDING_SILENCE_DURATION_MS = 320;
+const VOICE_POST_SPEAK_LISTEN_DELAY_MS = 60;
 const VOICE_RELISTEN_DELAY_MS = 120;
 const VOICE_RECOVERY_RETRY_DELAY_MS = 250;
 const VOICE_PROACTIVE_REPROMPT_DELAY_MS = 250;
 const VOICE_PROACTIVE_REPROMPT_AFTER_SILENT_WINDOWS = 2;
 const VOICE_MIN_GAP_BETWEEN_PROACTIVE_TURNS_MS = 3_500;
-const VOICE_DUPLICATE_GUIDANCE_COOLDOWN_MS = 8_000;
 const COACH_IMAGE_REFRESH_WINDOW_MS = 12_000;
+const VOICE_MAX_PENDING_TURNS = 6;
 const BROWSER_AUDIO_CHECK_EARLY_EXIT_MS = 1_500;
 const AUTO_STEP_CHECK_DELAY_MS = 2_500;
 const STEP_CHECK_COOLDOWN_MS = 4_000;
-const LIVE_MONITOR_INTERVAL_MS = 600;
-const LIVE_MONITOR_WINDOW_MS = 5_000;
+const LIVE_MONITOR_INTERVAL_MS = 450;
+const LIVE_MONITOR_WINDOW_MS = 4_000;
+const LIVE_MONITOR_SPOKEN_CUE_COOLDOWN_MS = 6_500;
+const LIVE_MONITOR_SPOKEN_CUE_MIN_STABILITY = 0.62;
 const COACH_AUDIO_PLAYBACK_ERROR =
   "Coach guidance is available in text, but spoken playback did not start. Check browser/site audio output and run Preflight if needed.";
 
@@ -148,6 +152,11 @@ type MicDiagnosticResult = {
   processingMs: number | null;
   roundTripMs: number | null;
   transcript: string;
+};
+
+type PendingLearnerTurn = {
+  transcript: string;
+  audioClip: RecordedVoiceClip | null;
 };
 
 const EMPTY_MIC_DIAGNOSTIC_RESULT: MicDiagnosticResult = {
@@ -599,6 +608,7 @@ export default function TrainProcedurePage() {
     useState<MicDiagnosticResult>({ ...EMPTY_MIC_DIAGNOSTIC_RESULT });
   const [voiceSessionStatus, setVoiceSessionStatus] =
     useState<VoiceSessionStatus>("idle");
+  const voiceSessionStatusRef = useRef<VoiceSessionStatus>("idle");
   const [liveSessionAccessError, setLiveSessionAccessError] = useState<string | null>(
     null,
   );
@@ -609,6 +619,7 @@ export default function TrainProcedurePage() {
   const [isSessionPaused, setIsSessionPaused] = useState(false);
   const [isLiveSessionActive, setIsLiveSessionActive] = useState(false);
   const activeVoiceCaptureRef = useRef<VoiceCaptureController | null>(null);
+  const voiceCaptureInterruptedByCoachSpeechRef = useRef(false);
   const browserMicDiagnosticControllerRef =
     useRef<BrowserSpeechRecognitionController | null>(null);
   const backendMicDiagnosticControllerRef =
@@ -629,10 +640,17 @@ export default function TrainProcedurePage() {
     conversationStage: CoachChatResponse["conversation_stage"];
     signature: string;
   } | null>(null);
+  const lastLiveMonitorSpokenRef = useRef<{
+    at: number;
+    signature: string;
+    stepStatus: AnalyzeFrameResponse["step_status"];
+  } | null>(null);
   const lastCoachTurnAtRef = useRef<number | null>(null);
   const lastCoachVisualAtRef = useRef<number | null>(null);
   const analyzeRequestInFlightRef = useRef(false);
   const liveMonitorRequestInFlightRef = useRef(false);
+  const liveMonitorSpeechInFlightRef = useRef(false);
+  const pendingLearnerTurnsRef = useRef<PendingLearnerTurn[]>([]);
   const lastStepCheckAtRef = useRef<number | null>(null);
   const lastStageAnalysisKeyRef = useRef<string | null>(null);
   const isSecureBrowserContext =
@@ -647,6 +665,10 @@ export default function TrainProcedurePage() {
     liveSessionActiveRef.current = active;
     setIsLiveSessionActive(active);
   }, []);
+
+  useEffect(() => {
+    voiceSessionStatusRef.current = voiceSessionStatus;
+  }, [voiceSessionStatus]);
 
   useEffect(() => {
     if (typeof window === "undefined") {
@@ -1558,6 +1580,11 @@ export default function TrainProcedurePage() {
         : cameraStatus.canRetry && cameraStatus.state !== "idle"
           ? "Retry Camera"
           : "Start Camera";
+  const checkStepButtonLabel = isAnalyzing
+    ? "Analyzing Step..."
+    : isSetupStage
+      ? "Check Setup"
+      : "Check My Step";
   const liveSessionQuotaLabel = useMemo(() => {
     if (!authUser) {
       return null;
@@ -1611,10 +1638,10 @@ export default function TrainProcedurePage() {
             label: "Backend services",
             status: nextBackendHealth.ai_ready ? "pass" : "retry",
             summary: nextBackendHealth.ai_ready
-              ? "API and AI coach are reachable"
+              ? "API reachable; AI coach configured"
               : "API reachable, but AI coach config needs attention",
             detail: nextBackendHealth.ai_ready
-              ? `Simulation-only mode is ${nextBackendHealth.simulation_only ? "on" : "off"}. AI coach configuration is ready.`
+              ? `Simulation-only mode is ${nextBackendHealth.simulation_only ? "on" : "off"}. Health verifies AI configuration; the first live coach turn verifies model reachability.`
               : "The API responded, but the AI coach configuration is incomplete.",
           }
         : {
@@ -1770,22 +1797,22 @@ export default function TrainProcedurePage() {
       checks.push({
         id: "speech-path",
         label: "Speech path",
-        status: "pass",
-        summary: "Browser speech-to-text available",
+        status: "retry",
+        summary: "Browser speech-to-text available, not verified",
         detail:
-          "Browser speech recognition is available and microphone permission is granted. Run Preflight if you want to verify spoken input.",
+          "Browser speech recognition is available and microphone permission is granted. Run Preflight to confirm it returns a usable transcript.",
       });
     } else if (backendSpeechReady && microphonePermissionGranted) {
       checks.push({
         id: "speech-path",
         label: "Speech path",
-        status: "pass",
+        status: "retry",
         summary: transcriptionUsesOpenAI
-          ? "Backend OpenAI fallback ready"
-          : "Backend fallback ready",
+          ? "Backend OpenAI fallback available, not verified"
+          : "Backend fallback available, not verified",
         detail: transcriptionUsesOpenAI
-          ? "Browser speech-to-text is unavailable here, but the OpenAI transcription fallback is configured and microphone permission is granted."
-          : "Browser speech-to-text is unavailable here, but the backend transcription fallback is configured and microphone permission is granted.",
+          ? "Browser speech-to-text is unavailable here, but the OpenAI transcription fallback is configured and microphone permission is granted. Run Preflight to confirm a spoken sample works."
+          : "Browser speech-to-text is unavailable here, but the backend transcription fallback is configured and microphone permission is granted. Run Preflight to confirm a spoken sample works.",
       });
     } else if (browserSpeechRecognitionAvailable || backendSpeechReady) {
       checks.push({
@@ -2087,9 +2114,9 @@ export default function TrainProcedurePage() {
     : liveMonitorCopy
       ? liveMonitorCopy
     : isPreviewCameraMode
-      ? "The camera is on. The trainer will auto-check once the field has been steady for a moment."
+      ? "The camera is on. The trainer will auto-check once the field has been steady, or you can run a manual check."
     : cameraReady
-      ? "Camera is live. Each new stage can auto-check after a steady view, and you can still ask for another pass."
+      ? "Camera is live. Each new stage can auto-check after a steady view, and you can rerun a check if the frame changes."
     : "Start the camera to begin this guided practice block.";
 
   useEffect(() => {
@@ -2103,6 +2130,9 @@ export default function TrainProcedurePage() {
   useEffect(() => {
     setLiveMonitorFeedback(null);
     liveMonitorRequestInFlightRef.current = false;
+    liveMonitorSpeechInFlightRef.current = false;
+    voiceCaptureInterruptedByCoachSpeechRef.current = false;
+    lastLiveMonitorSpokenRef.current = null;
   }, [cameraReady, currentStageId, isLiveSessionActive, session?.id]);
 
   const persistSession = useCallback((nextSession: SessionRecord) => {
@@ -2549,6 +2579,116 @@ export default function TrainProcedurePage() {
     });
   }, []);
 
+  const splitLearnerTranscriptIntoTurns = useCallback((transcript: string): string[] => {
+    const normalized = transcript.replace(/\s+/g, " ").trim();
+    if (!normalized) {
+      return [];
+    }
+
+    const sentenceLikeTurns = normalized
+      .split(/(?<=[.!?])\s+/)
+      .map((part) => part.trim())
+      .filter(Boolean);
+
+    if (sentenceLikeTurns.length > 1) {
+      return sentenceLikeTurns;
+    }
+
+    const conjunctionSplitTurns = normalized
+      .split(/\s+(?:and then|then|next)\s+/i)
+      .map((part) => part.trim())
+      .filter(Boolean);
+    return conjunctionSplitTurns.length > 1
+      ? conjunctionSplitTurns
+      : [normalized];
+  }, []);
+
+  const enqueueLearnerTurns = useCallback((turns: PendingLearnerTurn[]) => {
+    if (turns.length === 0) {
+      return;
+    }
+
+    const queue = pendingLearnerTurnsRef.current;
+    queue.push(...turns);
+
+    if (queue.length > VOICE_MAX_PENDING_TURNS) {
+      queue.splice(0, queue.length - VOICE_MAX_PENDING_TURNS);
+    }
+  }, []);
+
+  const speakCoachMessage = useCallback(async (
+    message: string,
+    options?: {
+      addToTranscript?: boolean;
+      conversationStage?: CoachChatResponse["conversation_stage"];
+      setListeningAfter?: boolean;
+      waitForCompletion?: boolean;
+    },
+  ): Promise<boolean> => {
+    const trimmed = message.trim();
+    if (!trimmed || !liveSessionActiveRef.current) {
+      return false;
+    }
+
+    const addToTranscript = options?.addToTranscript ?? true;
+    const setListeningAfter = options?.setListeningAfter ?? true;
+    const waitForCompletion = options?.waitForCompletion ?? true;
+    const coachSignature = buildCoachMessageSignature(trimmed);
+
+    if (addToTranscript) {
+      appendCoachMessage("assistant", trimmed);
+    }
+
+    if (activeVoiceCaptureRef.current) {
+      voiceCaptureInterruptedByCoachSpeechRef.current = true;
+    }
+    cancelActiveVoiceCapture();
+    setVoiceSessionStatus("speaking");
+
+    const didSpeak = waitForCompletion
+      ? await speakTextAndWait(
+          trimmed,
+          equityMode.feedbackLanguage,
+          equityMode.coachVoice,
+        )
+      : await speakText(
+          trimmed,
+          equityMode.feedbackLanguage,
+          equityMode.coachVoice,
+        );
+
+    if (!liveSessionActiveRef.current) {
+      return didSpeak;
+    }
+
+    if (!didSpeak) {
+      setCoachError(COACH_AUDIO_PLAYBACK_ERROR);
+      setVoiceSessionStatus("paused");
+      return false;
+    }
+
+    setCoachError((current) =>
+      current === COACH_AUDIO_PLAYBACK_ERROR ? null : current,
+    );
+    lastCoachMessageRef.current = {
+      at: Date.now(),
+      conversationStage: options?.conversationStage ?? "guiding",
+      signature: coachSignature,
+    };
+    lastCoachTurnAtRef.current = Date.now();
+
+    if (setListeningAfter) {
+      setVoiceSessionStatus("listening");
+    }
+
+    return true;
+  }, [
+    appendCoachMessage,
+    cancelActiveVoiceCapture,
+    equityMode.coachVoice,
+    equityMode.feedbackLanguage,
+  ]);
+
   const handleAnalyzeStep = useCallback(async (
     options?: {
       respectCooldown?: boolean;
@@ -2605,12 +2745,14 @@ export default function TrainProcedurePage() {
         return false;
       }
 
-      const didActivateLiveSession = await activateLiveSessionIfNeeded();
-      if (!didActivateLiveSession) {
-        setAnalyzeError(
-          "Live training could not start yet. Resolve the session-access issue and try again.",
-        );
-        return false;
+      if (currentStage.id !== "setup") {
+        const didActivateLiveSession = await activateLiveSessionIfNeeded();
+        if (!didActivateLiveSession) {
+          setAnalyzeError(
+            "Live training could not start yet. Resolve the session-access issue and try again.",
+          );
+          return false;
+        }
       }
 
       lastStepCheckAtRef.current = Date.now();
@@ -2676,47 +2818,40 @@ export default function TrainProcedurePage() {
         updatedAt: new Date().toISOString(),
       });
 
+      if (
+        currentStage.id === "setup" &&
+        response.step_status === "pass" &&
+        response.grading_decision === "graded"
+      ) {
+        const nextStageId = findNextStageId(procedure, currentStage.id);
+        if (nextStageId) {
+          if (cameraRef.current?.hasLiveStream()) {
+            cameraStopModeRef.current = "idle";
+            cameraRef.current.stopCamera(
+              "Setup confirmed. Start the camera again when you are ready for the grip stage.",
+            );
+          }
+          setFeedback(null);
+          setFeedbackStageId(null);
+          setCurrentStageId(nextStageId);
+          setActiveWorkspacePanel("checklist");
+          setLiveMonitorFeedback(null);
+        }
+        return true;
+      }
+
       setFeedback(response);
       setFeedbackStageId(currentStage.id);
 
       if (
         currentStage.id !== "setup" &&
         equityMode.audioCoaching &&
-        isLiveSessionActive &&
+        liveSessionActiveRef.current &&
         response.coaching_message.trim()
       ) {
-        const stepCoachingMessage = response.coaching_message.trim();
-        const stepCoachingSignature =
-          buildCoachMessageSignature(stepCoachingMessage);
-
-        appendCoachMessage("assistant", stepCoachingMessage);
-        setVoiceSessionStatus("speaking");
-
-        const didSpeakStepCoaching = await speakTextAndWait(
-          stepCoachingMessage,
-          equityMode.feedbackLanguage,
-          equityMode.coachVoice,
-        );
-        if (!liveSessionActiveRef.current) {
-          return true;
-        }
-
-        if (!didSpeakStepCoaching) {
-          setCoachError(COACH_AUDIO_PLAYBACK_ERROR);
-          setVoiceSessionStatus("paused");
-          return true;
-        }
-
-        setCoachError((current) =>
-          current === COACH_AUDIO_PLAYBACK_ERROR ? null : current,
-        );
-        lastCoachMessageRef.current = {
-          at: Date.now(),
+        await speakCoachMessage(response.coaching_message, {
           conversationStage: "guiding",
-          signature: stepCoachingSignature,
-        };
-        lastCoachTurnAtRef.current = Date.now();
-        setVoiceSessionStatus("listening");
+        });
       }
       return true;
     } catch (error) {
@@ -2744,7 +2879,6 @@ export default function TrainProcedurePage() {
     }
   }, [
     activateLiveSessionIfNeeded,
-    appendCoachMessage,
     appendOfflinePracticeLog,
     authUser,
     cameraReady,
@@ -2753,7 +2887,6 @@ export default function TrainProcedurePage() {
     currentStage,
     currentStageAnalysisKey,
     equityMode,
-    isLiveSessionActive,
     isOnline,
     latestLearnerGoal,
     practiceSurface,
@@ -2762,6 +2895,7 @@ export default function TrainProcedurePage() {
     session,
     simulationConfirmed,
     skillLevel,
+    speakCoachMessage,
     studentQuestion,
   ]);
 
@@ -2816,9 +2950,91 @@ export default function TrainProcedurePage() {
     return false;
   }, [canAdvance, canCheckCurrentStep, handleAdvance, handleAnalyzeStep]);
 
+  const maybeSpeakLiveMonitorCue = useCallback(async (
+    response: AnalyzeFrameResponse,
+  ) => {
+    const temporalState = response.temporal_state;
+    const message = response.coaching_message.trim();
+
+    if (
+      !message ||
+      !temporalState ||
+      temporalState.analysis_source === "cached" ||
+      !equityMode.audioCoaching ||
+      !cameraReady ||
+      !liveSessionActiveRef.current ||
+      liveMonitorSpeechInFlightRef.current ||
+      voiceSessionStatusRef.current === "speaking" ||
+      voiceSessionStatusRef.current === "thinking" ||
+      voiceSessionStatusRef.current === "paused"
+    ) {
+      return;
+    }
+
+    const now = Date.now();
+    const signature = buildCoachMessageSignature(message);
+    const lastSpokenCue = lastLiveMonitorSpokenRef.current;
+    const lastCoachTurnAt = lastCoachTurnAtRef.current;
+    const statusChanged = lastSpokenCue?.stepStatus !== response.step_status;
+    const cooldownElapsed =
+      !lastSpokenCue ||
+      now - lastSpokenCue.at >= LIVE_MONITOR_SPOKEN_CUE_COOLDOWN_MS;
+    const coachGapElapsed =
+      lastCoachTurnAt === null ||
+      now - lastCoachTurnAt >= VOICE_MIN_GAP_BETWEEN_PROACTIVE_TURNS_MS;
+    const stableEnough =
+      temporalState.stability >= LIVE_MONITOR_SPOKEN_CUE_MIN_STABILITY ||
+      statusChanged ||
+      response.step_status === "unsafe";
+
+    if (
+      !stableEnough ||
+      (!statusChanged && !cooldownElapsed) ||
+      (!statusChanged && !coachGapElapsed)
+    ) {
+      return;
+    }
+
+    if (
+      lastSpokenCue?.signature === signature &&
+      !statusChanged &&
+      !cooldownElapsed
+    ) {
+      return;
+    }
+
+    if (
+      lastCoachMessageRef.current?.signature === signature &&
+      !cooldownElapsed
+    ) {
+      return;
+    }
+
+    liveMonitorSpeechInFlightRef.current = true;
+
+    try {
+      const didSpeak = await speakCoachMessage(message, {
+        conversationStage: "guiding",
+      });
+
+      if (didSpeak) {
+        lastLiveMonitorSpokenRef.current = {
+          at: Date.now(),
+          signature,
+          stepStatus: response.step_status,
+        };
+      }
+    } finally {
+      liveMonitorSpeechInFlightRef.current = false;
+    }
+  }, [
+    cameraReady,
+    equityMode.audioCoaching,
+    speakCoachMessage,
+  ]);
+
   useEffect(() => {
     if (
-      activeWorkspacePanel === "setup" ||
       !currentStageAnalysisKey ||
       !canCheckCurrentStep ||
       analyzeRequestInFlightRef.current ||
@@ -2830,7 +3046,8 @@ export default function TrainProcedurePage() {
     const timeoutId = window.setTimeout(() => {
       if (
         analyzeRequestInFlightRef.current ||
-        lastStageAnalysisKeyRef.current === currentStageAnalysisKey
+        lastStageAnalysisKeyRef.current === currentStageAnalysisKey ||
+        !cameraRef.current?.hasLiveStream()
       ) {
         return;
       }
@@ -2844,7 +3061,6 @@ export default function TrainProcedurePage() {
       window.clearTimeout(timeoutId);
     };
   }, [
-    activeWorkspacePanel,
     canCheckCurrentStep,
     currentStageAnalysisKey,
     handleAnalyzeStep,
@@ -2921,6 +3137,7 @@ export default function TrainProcedurePage() {
           }
 
           setLiveMonitorFeedback(response);
+          void maybeSpeakLiveMonitorCue(response);
           nextDelayMs = Math.max(
             LIVE_MONITOR_INTERVAL_MS,
             response.temporal_state?.next_recommended_check_ms ??
@@ -2954,6 +3171,7 @@ export default function TrainProcedurePage() {
     isAnalyzing,
     isLiveSessionActive,
     latestLearnerGoal,
+    maybeSpeakLiveMonitorCue,
     practiceSurface,
     procedure,
     session,
@@ -3106,6 +3324,8 @@ export default function TrainProcedurePage() {
   useEffect(() => {
     const generation = voiceLoopGenerationRef.current + 1;
     voiceLoopGenerationRef.current = generation;
+    voiceCaptureInterruptedByCoachSpeechRef.current = false;
+    pendingLearnerTurnsRef.current = [];
     cancelActiveVoiceCapture();
     stopSpeechPlayback();
 
@@ -3150,6 +3370,7 @@ export default function TrainProcedurePage() {
           );
 
         const proactiveResponse = await requestCoachTurn({
+          includeImage: false,
           messages: coachMessagesRef.current.slice(-COACH_CONVERSATION_WINDOW),
         });
 
@@ -3174,10 +3395,9 @@ export default function TrainProcedurePage() {
           const isDuplicateGuidance =
             Boolean(coachSignature) &&
             Boolean(lastCoachMessage) &&
-            lastCoachMessage?.signature === coachSignature &&
-            Date.now() - lastCoachMessage.at < VOICE_DUPLICATE_GUIDANCE_COOLDOWN_MS;
+            lastCoachMessage?.signature === coachSignature;
 
-          if (!isDuplicateGuidance) {
+          if (!voiceChatEnabled && !isDuplicateGuidance) {
             appendCoachMessage("assistant", proactiveResponse.coach_message);
           }
 
@@ -3189,11 +3409,12 @@ export default function TrainProcedurePage() {
               continue;
             }
 
-            setVoiceSessionStatus("speaking");
-            const didSpeakCoachTurn = await speakTextAndWait(
+            const didSpeakCoachTurn = await speakCoachMessage(
               proactiveResponse.coach_message,
-              equityMode.feedbackLanguage,
-              equityMode.coachVoice,
+              {
+                conversationStage: proactiveResponse.conversation_stage,
+                waitForCompletion: false,
+              },
             );
             if (
               cancelled ||
@@ -3203,19 +3424,11 @@ export default function TrainProcedurePage() {
               return;
             }
             if (!didSpeakCoachTurn) {
-              setCoachError(COACH_AUDIO_PLAYBACK_ERROR);
               setVoiceSessionStatus("paused");
-              return;
+              await waitForCoachLoop(VOICE_RECOVERY_RETRY_DELAY_MS);
+              shouldRequestCoachTurn = true;
+              continue;
             }
-            setCoachError((current) =>
-              current === COACH_AUDIO_PLAYBACK_ERROR ? null : current,
-            );
-            lastCoachMessageRef.current = {
-              at: Date.now(),
-              conversationStage: proactiveResponse.conversation_stage,
-              signature: coachSignature,
-            };
-            lastCoachTurnAtRef.current = Date.now();
 
             if (cancelled || voiceLoopGenerationRef.current !== generation) {
               return;
@@ -3241,12 +3454,23 @@ export default function TrainProcedurePage() {
         setVoiceSessionStatus("listening");
 
         let voiceCaptureController: VoiceCaptureController | null = null;
+        const captureStartedAt = Date.now();
         try {
           voiceCaptureController = await startVoiceCapture({
             language: equityMode.feedbackLanguage,
             maxDurationMs: LIVE_VOICE_CAPTURE_MAX_DURATION_MS,
             minSpeechDurationMs: VOICE_RECORDING_MIN_SPEECH_MS,
             silenceDurationMs: VOICE_RECORDING_SILENCE_DURATION_MS,
+            onSpeechDetected: () => {
+              // Barge-in with a short guard window so trailing coach audio does
+              // not instantly cut off newly started playback.
+              if (
+                Date.now() - captureStartedAt >= 450 &&
+                isSpeechPlaybackInProgress()
+              ) {
+                stopSpeechPlayback();
+              }
+            },
           });
         } catch (error) {
           setCoachError(
@@ -3278,6 +3502,23 @@ export default function TrainProcedurePage() {
 
         if (cancelled || voiceLoopGenerationRef.current !== generation) {
           return;
+        }
+
+        if (voiceCaptureInterruptedByCoachSpeechRef.current) {
+          voiceCaptureInterruptedByCoachSpeechRef.current = false;
+          while (
+            !cancelled &&
+            voiceLoopGenerationRef.current === generation &&
+            liveMonitorSpeechInFlightRef.current
+          ) {
+            await waitForCoachLoop(VOICE_POST_SPEAK_LISTEN_DELAY_MS);
+          }
+          if (cancelled || voiceLoopGenerationRef.current !== generation) {
+            return;
+          }
+          silentListenWindows = 0;
+          shouldRequestCoachTurn = false;
+          continue;
         }
 
         const learnerTranscript = learnerTurn?.transcript.trim() ?? "";
@@ -3326,114 +3567,133 @@ export default function TrainProcedurePage() {
         }
 
         silentListenWindows = 0;
-        setVoiceSessionStatus("thinking");
+        const transcriptTurns = learnerTranscript
+          ? splitLearnerTranscriptIntoTurns(learnerTranscript)
+          : [];
+        const queuedTurns: PendingLearnerTurn[] =
+          transcriptTurns.length > 0
+            ? transcriptTurns.map((turnTranscript) => ({
+                transcript: turnTranscript,
+                audioClip: null,
+              }))
+            : [
+                {
+                  transcript: "",
+                  audioClip: learnerClip,
+                },
+              ];
+        enqueueLearnerTurns(queuedTurns);
 
-        const learnerResponse = await requestCoachTurn({
-          audioClip: learnerTranscript ? null : learnerClip,
-          includeImage: true,
-          learnerMessage: learnerTranscript,
-          messages: coachMessagesRef.current.slice(-COACH_CONVERSATION_WINDOW),
-        });
+        let shouldRequestAfterQueue = false;
+        while (
+          pendingLearnerTurnsRef.current.length > 0 &&
+          !cancelled &&
+          voiceLoopGenerationRef.current === generation
+        ) {
+          const pendingTurn = pendingLearnerTurnsRef.current.shift();
+          if (!pendingTurn) {
+            break;
+          }
 
-        if (cancelled || voiceLoopGenerationRef.current !== generation) {
-          return;
-        }
-
-        if (!learnerResponse) {
-          setVoiceSessionStatus("paused");
-          await waitForCoachLoop(VOICE_RECOVERY_RETRY_DELAY_MS);
-          shouldRequestCoachTurn = true;
-          continue;
-        }
-
-        const resolvedLearnerTranscript =
-          learnerTranscript || learnerResponse.learner_transcript.trim();
-        if (!learnerTranscript && resolvedLearnerTranscript) {
-          const handledVoiceCommand =
-            await handleVoiceCommand(resolvedLearnerTranscript);
+          setVoiceSessionStatus("thinking");
+          const learnerResponse = await requestCoachTurn({
+            audioClip: pendingTurn.transcript ? null : pendingTurn.audioClip,
+            includeImage: false,
+            learnerMessage: pendingTurn.transcript,
+            messages: coachMessagesRef.current.slice(-COACH_CONVERSATION_WINDOW),
+          });
 
           if (cancelled || voiceLoopGenerationRef.current !== generation) {
             return;
           }
 
-          if (handledVoiceCommand) {
-            silentListenWindows = 0;
-            shouldRequestCoachTurn = false;
-            continue;
-          }
-        }
-
-        const learnerMessage =
-          resolvedLearnerTranscript ||
-          learnerResponse.learner_goal_summary.trim();
-
-        if (learnerMessage) {
-          appendCoachMessage(
-            "user",
-            learnerMessage,
-          );
-        }
-        const learnerTurnWasCaptured = Boolean(learnerTranscript || learnerClip);
-        const coachSignature = buildCoachMessageSignature(
-          learnerResponse.coach_message,
-        );
-        const lastCoachMessage = lastCoachMessageRef.current;
-        const isDuplicateGuidance =
-          Boolean(coachSignature) &&
-          Boolean(lastCoachMessage) &&
-          lastCoachMessage?.signature === coachSignature &&
-          Date.now() - lastCoachMessage.at < VOICE_DUPLICATE_GUIDANCE_COOLDOWN_MS;
-        const shouldSuppressCoachReply =
-          isDuplicateGuidance && !learnerTurnWasCaptured;
-
-        if (!shouldSuppressCoachReply) {
-          appendCoachMessage("assistant", learnerResponse.coach_message);
-        }
-        setVoiceSessionStatus("speaking");
-        if (!shouldSuppressCoachReply) {
-          const didSpeakCoachTurn = await speakTextAndWait(
-            learnerResponse.coach_message,
-            equityMode.feedbackLanguage,
-            equityMode.coachVoice,
-          );
-          if (
-            cancelled ||
-            voiceLoopGenerationRef.current !== generation ||
-            !liveSessionActiveRef.current
-          ) {
-            return;
-          }
-          if (!didSpeakCoachTurn) {
-            setCoachError(COACH_AUDIO_PLAYBACK_ERROR);
+          if (!learnerResponse) {
             setVoiceSessionStatus("paused");
-            return;
+            await waitForCoachLoop(VOICE_RECOVERY_RETRY_DELAY_MS);
+            shouldRequestAfterQueue = true;
+            break;
           }
-          setCoachError((current) =>
-            current === COACH_AUDIO_PLAYBACK_ERROR ? null : current,
+
+          const resolvedLearnerTranscript =
+            pendingTurn.transcript || learnerResponse.learner_transcript.trim();
+          if (!pendingTurn.transcript && resolvedLearnerTranscript) {
+            const handledVoiceCommand =
+              await handleVoiceCommand(resolvedLearnerTranscript);
+
+            if (cancelled || voiceLoopGenerationRef.current !== generation) {
+              return;
+            }
+
+            if (handledVoiceCommand) {
+              silentListenWindows = 0;
+              shouldRequestCoachTurn = false;
+              continue;
+            }
+          }
+
+          const learnerMessage =
+            resolvedLearnerTranscript ||
+            learnerResponse.learner_goal_summary.trim();
+
+          if (learnerMessage) {
+            appendCoachMessage(
+              "user",
+              learnerMessage,
+            );
+          }
+          const learnerTurnWasCaptured = Boolean(
+            pendingTurn.transcript || pendingTurn.audioClip,
           );
-          lastCoachMessageRef.current = {
-            at: Date.now(),
-            conversationStage: learnerResponse.conversation_stage,
-            signature: coachSignature,
-          };
-          lastCoachTurnAtRef.current = Date.now();
+          const coachSignature = buildCoachMessageSignature(
+            learnerResponse.coach_message,
+          );
+          const lastCoachMessage = lastCoachMessageRef.current;
+          const isDuplicateGuidance =
+            Boolean(coachSignature) &&
+            Boolean(lastCoachMessage) &&
+            lastCoachMessage?.signature === coachSignature;
+          const shouldSuppressCoachReply =
+            isDuplicateGuidance && !learnerTurnWasCaptured;
+
+          if (!shouldSuppressCoachReply) {
+            const didSpeakCoachTurn = await speakCoachMessage(
+              learnerResponse.coach_message,
+              {
+                conversationStage: learnerResponse.conversation_stage,
+                waitForCompletion: false,
+              },
+            );
+            if (
+              cancelled ||
+              voiceLoopGenerationRef.current !== generation ||
+              !liveSessionActiveRef.current
+            ) {
+              return;
+            }
+            if (!didSpeakCoachTurn) {
+              setVoiceSessionStatus("paused");
+              await waitForCoachLoop(VOICE_RECOVERY_RETRY_DELAY_MS);
+              shouldRequestAfterQueue = true;
+              break;
+            }
+
+            if (cancelled || voiceLoopGenerationRef.current !== generation) {
+              return;
+            }
+
+            await waitForCoachLoop(VOICE_POST_SPEAK_LISTEN_DELAY_MS);
+          } else {
+            setVoiceSessionStatus("listening");
+            await waitForCoachLoop(VOICE_RELISTEN_DELAY_MS);
+          }
 
           if (cancelled || voiceLoopGenerationRef.current !== generation) {
             return;
           }
-
-          await waitForCoachLoop(VOICE_POST_SPEAK_LISTEN_DELAY_MS);
-        } else {
-          setVoiceSessionStatus("listening");
-          await waitForCoachLoop(VOICE_RELISTEN_DELAY_MS);
-        }
-
-        if (cancelled || voiceLoopGenerationRef.current !== generation) {
-          return;
         }
 
         silentListenWindows = 0;
-        shouldRequestCoachTurn = false;
+        shouldRequestCoachTurn = shouldRequestAfterQueue ? true : false;
       }
     }
 
@@ -3441,6 +3701,7 @@ export default function TrainProcedurePage() {
 
     return () => {
       cancelled = true;
+      pendingLearnerTurnsRef.current = [];
       cancelActiveVoiceCapture();
       stopSpeechPlayback();
     };
@@ -3451,6 +3712,7 @@ export default function TrainProcedurePage() {
     cancelActiveVoiceCapture,
     coachLoopEnabled,
     currentStage,
+    enqueueLearnerTurns,
     equityMode.audioCoaching,
     equityMode.coachVoice,
     equityMode.feedbackLanguage,
@@ -3459,6 +3721,8 @@ export default function TrainProcedurePage() {
     requestCoachTurn,
     session,
     simulationConfirmed,
+    splitLearnerTranscriptIntoTurns,
+    speakCoachMessage,
     voiceChatEnabled,
   ]);
 
@@ -3754,7 +4018,7 @@ export default function TrainProcedurePage() {
           <p className="trainer-session-note">
             {liveSessionAccessError ??
               coachError ??
-              "Keep the surface centered. The trainer will auto-check once the view settles, and you can still use Check My Step anytime."}
+              "Keep the surface centered. The trainer will auto-check once the view settles, and you can run a manual check anytime."}
           </p>
         </div>
 
@@ -3866,7 +4130,7 @@ export default function TrainProcedurePage() {
                   onClick={() => void handleAnalyzeStep()}
                   type="button"
                 >
-                  {isAnalyzing ? "Analyzing Step..." : "Check My Step"}
+                  {checkStepButtonLabel}
                 </button>
                 {canAdvance ? (
                   <button

@@ -285,6 +285,7 @@ export type VoiceRecordingOptions = {
   minSpeechDurationMs?: number;
   silenceDurationMs?: number;
   silenceThreshold?: number;
+  onSpeechDetected?: () => void;
 };
 
 type BrowserSpeechRecognitionOptions = {
@@ -292,6 +293,7 @@ type BrowserSpeechRecognitionOptions = {
   maxDurationMs?: number;
   maxInterimSilenceMs?: number;
   stopAfterFinalResultMs?: number;
+  onSpeechDetected?: () => void;
 };
 
 export type BrowserSpeechRecognitionResult = {
@@ -565,6 +567,18 @@ export function primeSpeechPlayback(): boolean {
   return true;
 }
 
+export function isSpeechPlaybackInProgress(): boolean {
+  if (typeof window === "undefined") {
+    return false;
+  }
+
+  const synthActive = canUseSpeechSynthesis()
+    ? window.speechSynthesis.speaking || window.speechSynthesis.pending
+    : false;
+  const audioActive = Boolean(activeAudioElement && !activeAudioElement.paused);
+  return synthActive || audioActive;
+}
+
 function getPreferredSpeechVoice(
   language: FeedbackLanguage,
   preset: CoachVoicePreset,
@@ -769,6 +783,7 @@ export async function startVoiceRecording(
     silenceThreshold,
     DEFAULT_VOICE_RECORDING_FALLBACK_RMS,
   );
+  let didNotifySpeechDetected = false;
 
   let stream: MediaStream;
   try {
@@ -815,6 +830,10 @@ export async function startVoiceRecording(
     peakRms = Math.max(peakRms, rms);
 
     if (rms >= silenceThreshold) {
+      if (!didNotifySpeechDetected) {
+        didNotifySpeechDetected = true;
+        options.onSpeechDetected?.();
+      }
       if (speechStartedAt === null) {
         speechStartedAt = now;
       }
@@ -939,6 +958,7 @@ function startBrowserSpeechRecognition(
   let interimSilenceTimer: ReturnType<typeof setTimeout> | null = null;
   let resolveResult: ((result: BrowserSpeechRecognitionResult | null) => void) | null =
     null;
+  let didNotifySpeechDetected = false;
 
   const normalizeTranscript = (value: string): string =>
     value.replace(/\s+/g, " ").trim();
@@ -1021,6 +1041,11 @@ function startBrowserSpeechRecognition(
 
     finalTranscript = normalizeTranscript(nextFinalTranscript);
     interimTranscript = normalizeTranscript(nextInterimTranscript);
+
+    if (!didNotifySpeechDetected && (finalTranscript || interimTranscript)) {
+      didNotifySpeechDetected = true;
+      options.onSpeechDetected?.();
+    }
 
     if (finalTranscript) {
       clearInterimSilenceTimer();
@@ -1132,6 +1157,14 @@ export async function startVoiceCapture(
     language: FeedbackLanguage;
   },
 ): Promise<VoiceCaptureController | null> {
+  let recordingStartError: Error | null = null;
+  const recordingControllerPromise = startVoiceRecording(options).catch((error) => {
+    recordingStartError =
+      error instanceof Error
+        ? error
+        : new Error("Voice recording could not start.");
+    return null;
+  });
   let browserRecognitionController: BrowserSpeechRecognitionController | null = null;
   let browserRecognitionStartError: Error | null = null;
 
@@ -1139,6 +1172,7 @@ export async function startVoiceCapture(
     browserRecognitionController = startBrowserSpeechRecognition({
       language: options.language,
       maxDurationMs: options.maxDurationMs,
+      onSpeechDetected: options.onSpeechDetected,
     });
   } catch (error) {
     browserRecognitionStartError =
@@ -1148,45 +1182,51 @@ export async function startVoiceCapture(
   }
 
   if (browserRecognitionController) {
-    return {
-      result: browserRecognitionController.result.then((recognitionResult) => {
-        const transcript = recognitionResult?.transcript.trim() ?? "";
-        if (!transcript) {
-          return null;
-        }
+    const recordingResultPromise = recordingControllerPromise.then(
+      (recordingController) => recordingController?.result ?? null,
+    );
 
+    const resolveBrowserOrBackendTurn = async (
+      recognitionResult: BrowserSpeechRecognitionResult | null,
+    ): Promise<CapturedVoiceTurn | null> => {
+      const transcript = recognitionResult?.transcript.trim() ?? "";
+      if (transcript) {
+        const recordingController = await recordingControllerPromise;
+        void recordingController?.cancel();
         return {
           audioClip: null,
           transcript,
         };
-      }),
+      }
+
+      const audioClip = await recordingResultPromise;
+      return audioClip
+        ? {
+            audioClip,
+            transcript: "",
+          }
+        : null;
+    };
+
+    return {
+      result: browserRecognitionController.result.then(resolveBrowserOrBackendTurn),
       stop: async () => {
         const recognitionResult = await browserRecognitionController.stop();
-        const transcript = recognitionResult?.transcript.trim() ?? "";
-        if (!transcript) {
-          return null;
-        }
-
-        return {
-          audioClip: null,
-          transcript,
-        };
+        const recordingController = await recordingControllerPromise;
+        await recordingController?.stop();
+        return resolveBrowserOrBackendTurn(recognitionResult);
       },
-      cancel: () => browserRecognitionController.cancel(),
+      cancel: async () => {
+        await browserRecognitionController.cancel();
+        const recordingController = await recordingControllerPromise;
+        await recordingController?.cancel();
+      },
     };
   }
 
   let recordingController: VoiceRecordingController | null = null;
-  let recordingStartError: Error | null = null;
 
-  try {
-    recordingController = await startVoiceRecording(options);
-  } catch (error) {
-    recordingStartError =
-      error instanceof Error
-        ? error
-        : new Error("Voice recording could not start.");
-  }
+  recordingController = await recordingControllerPromise;
 
   if (!recordingController) {
     throw (

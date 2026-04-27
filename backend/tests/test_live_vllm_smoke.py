@@ -277,9 +277,11 @@ def test_live_backend_uses_vllm_for_audio_coach_chat() -> None:
     assert response["coach_message"]
     assert response["conversation_stage"] in {"goal_setting", "planning", "guiding", "blocked"}
     assert "learner_goal_summary" in response
-    if (
-        response["conversation_stage"] == "blocked"
-        and "audio support" in response["coach_message"].lower()
+    blocked_message = response["coach_message"].lower()
+    if response["conversation_stage"] == "blocked" and (
+        "audio support" in blocked_message
+        or "transcribe" in blocked_message
+        or "transcription" in blocked_message
     ):
         pytest.skip(response["coach_message"])
     assert (

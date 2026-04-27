@@ -140,6 +140,11 @@ AI_FALLBACK_DEBRIEF_MODEL=claude-sonnet-4-6
 AI_FALLBACK_LEARNING_MODEL=claude-haiku-4-5
 ```
 
+For a local-vLLM-only run, leave `AI_FALLBACK_API_KEY` as `EMPTY` or
+`SET_IN_ENV_MANAGER`. The fallback key is intentionally separate from
+`AI_API_KEY`, so the local vLLM bearer token does not silently enable Anthropic
+fallback.
+
 Local browser/backend alignment:
 
 ```env
@@ -198,6 +203,9 @@ micromamba run -n <backend-env> pytest backend/tests/test_live_vllm_smoke.py -q 
   `AI_*_MODEL` values.
 - Anthropic fallback never engages:
   verify the `AI_FALLBACK_*` values are set and the fallback API key is real.
+- Local-vLLM-only mode still tries Anthropic:
+  clear `AI_FALLBACK_API_KEY` and any exported `ANTHROPIC_API_KEY`, then restart
+  the backend.
 - Model download fails:
   log in with `huggingface-cli login`, confirm network access, and make sure the
   model id is spelled exactly as published on Hugging Face.

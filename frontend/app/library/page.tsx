@@ -337,7 +337,7 @@ export default function LibraryPage() {
       `Use a ${procedure.practice_surface.toLowerCase()} simulation surface.`,
       "Keep the practice surface, needle driver, and suture fully visible.",
       "Use bright, steady lighting and avoid dark or blurry frames.",
-      "Frame only the simulation field before pressing Check My Step.",
+      "Frame only the simulation field before letting the trainer auto-check.",
       ...(setupStage?.visible_checks ?? []).map((item) => `Verify ${item}.`),
     ];
   }, [procedure]);

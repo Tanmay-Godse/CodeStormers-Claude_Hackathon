@@ -162,6 +162,41 @@ def test_analysis_service_backfills_trimmed_response_fields(monkeypatch) -> None
     assert response.next_action
 
 
+def test_analysis_service_accepts_single_visible_observation(monkeypatch) -> None:
+    monkeypatch.setattr(
+        safety_service,
+        "evaluate_safety_gate",
+        lambda **_: make_cleared_safety_gate(),
+    )
+    monkeypatch.setattr(
+        analysis_service,
+        "send_json_message",
+        lambda **_: {
+            "step_status": "retry",
+            "confidence": 0.82,
+            "visible_observations": ["entry zone is visible"],
+            "issues": [],
+            "coaching_message": "Lift the wrist slightly before retrying.",
+            "next_action": "Capture another clear entry attempt.",
+            "overlay_target_ids": ["entry_point"],
+        },
+    )
+
+    payload = AnalyzeFrameRequest(
+        procedure_id="simple-interrupted-suture",
+        stage_id="needle_entry",
+        skill_level="beginner",
+        image_base64="ZmFrZQ==",
+        simulation_confirmation=True,
+    )
+
+    response = analysis_service.analyze_frame_payload(payload)
+
+    assert response.visible_observations[0] == "entry zone is visible"
+    assert len(response.visible_observations) >= 2
+    assert response.step_status == "retry"
+
+
 def test_analysis_service_accepts_setup_when_simulation_surface_is_cleared(monkeypatch) -> None:
     monkeypatch.setattr(
         safety_service,

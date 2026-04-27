@@ -26,6 +26,8 @@
   --font-size-small: 0.86rem;
   --font-size-label: 0.78rem;
   --line-height-copy: 1.65;
+  --font-body: "Inter", "Aptos", "Segoe UI", sans-serif;
+  --font-display: "Manrope", "Aptos Display", "Segoe UI", sans-serif;
 }
 
 * {
@@ -39,7 +41,7 @@ html {
 body {
   margin: 0;
   color: var(--ink);
-  font-family: var(--font-body), sans-serif;
+  font-family: var(--font-body);
   line-height: 1.5;
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
@@ -76,7 +78,7 @@ h4,
 h5,
 h6 {
   margin: 0;
-  font-family: var(--font-display), sans-serif;
+  font-family: var(--font-display);
   letter-spacing: -0.03em;
 }
 

@@ -118,7 +118,7 @@ export function FeedbackCard({
           <strong>{stageTitle}</strong>
           <p className="feedback-copy">
             No result yet. Turn on the camera, frame the practice surface, and let the
-            live monitor settle or click <em>Check My Step</em>.
+            live monitor settle.
           </p>
         </div>
       ) : null}

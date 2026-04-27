@@ -77,7 +77,8 @@ prefix so setup stays explicit and consistent.
 
 ## Option A: Anthropic Main AI Plus OpenAI Transcription
 
-This is the current demo default.
+Use this if you want a cloud-first backend instead of the local-vLLM default
+documented in [how-to-run.md](how-to-run.md).
 
 1. Create your own Anthropic API key in your Anthropic account.
 2. Create your own OpenAI API key in your OpenAI account.
@@ -104,7 +105,7 @@ cd backend
 micromamba run -n <your env> uvicorn app.main:app --reload --reload-dir app --port 8001
 ```
 
-Use this option if you want to keep the current demo behavior unchanged.
+Use this option if you want Anthropic to be the primary model provider.
 
 ## Option B: OpenAI Main AI Plus OpenAI Transcription
 

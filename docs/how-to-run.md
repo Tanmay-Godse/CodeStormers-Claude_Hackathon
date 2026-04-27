@@ -146,16 +146,17 @@ audio-diagnostic, and image-analysis actions:
   checks backend/API reachability, AI readiness, secure browser context, camera
   and mic permission state, browser speech-to-text availability, backend
   transcription readiness, network state, and live-session quota state.
-- `Check Audio`:
+- `Run Preflight`:
   runs an audio-only diagnostic. It does not send a camera frame and does not
   consume image-analysis calls.
-- `Check Audio` speech path:
+- `Run Preflight` speech path:
   tries Browser STT first. If backend transcription is ready, it also captures
   one backend comparison sample and shows both result cards in the footer.
-- `Check My Step`:
-  runs the current stage check. On `Setup`, it runs a local preflight that can
-  briefly open camera and microphone permissions without starting a counted
-  live session. On later stages, it runs frame analysis.
+- automatic step checks:
+  run the current stage check after the camera view settles. On `Setup`, the
+  check stays local and can briefly open camera and microphone permissions
+  without starting a counted live session. On later stages, it runs frame
+  analysis.
 - session controls:
   `Pause Session` keeps the current run state and remaining time, while
   `End Session` closes the current run cleanly.
@@ -169,13 +170,13 @@ audio-diagnostic, and image-analysis actions:
 2. Open `/dashboard`.
 3. Open `/train/simple-interrupted-suture`.
 4. Stay on the `Setup` tab and confirm the preflight checks load.
-5. Run `Check Audio`, speak one short sentence, and confirm the footer shows Browser STT plus Backend Transcribe results when backend transcription is configured.
-6. Run `Check My Step` once on `Setup` and confirm the local preflight finishes quickly.
+5. Click `Run Preflight`, speak one short sentence, and confirm the footer shows Browser STT plus Backend Transcribe results when backend transcription is configured.
+6. Start the camera on `Setup` and let the automatic setup check finish quickly.
 7. If prompted, allow camera and microphone permissions.
 8. Confirm the setup check closes the preview again and does not consume a live-session allowance.
 9. Start camera preview for the first real non-setup stage.
 10. Frame a clearly visible simulated surface such as any fruit or foam pad.
-11. Use `Check My Step` on a non-setup stage and confirm the trainer starts the counted live session, analysis, and timer there.
+11. Hold the non-setup stage steady and confirm the automatic check starts the counted live session, analysis, and timer there.
 12. Optionally test `Pause Session` and `End Session` so the live controls are confirmed before a demo.
 13. Open the generated review from the session flow.
 14. Visit `/knowledge` and `/library` to confirm the supporting surfaces load.
@@ -236,11 +237,14 @@ the backend.
   `AI_API_BASE_URL`, `AI_API_KEY`, or the selected local model id is wrong.
 - Anthropic fallback never engages:
   `AI_FALLBACK_API_KEY` or the `AI_FALLBACK_*_MODEL` values are missing.
+- Local-vLLM-only mode still tries Anthropic:
+  clear `AI_FALLBACK_API_KEY` and any exported `ANTHROPIC_API_KEY`, then restart
+  the backend.
 - Learner voice is not transcribed:
   browser STT may be unavailable in that browser, or the backend
   `TRANSCRIPTION_API_KEY` is missing, placeholder-only, revoked, or wrong. Use
-  the trainer `Setup` tab and `Check Audio` to see which speech path is active.
-- `Check Audio` shows both browser and backend result cards:
+  the trainer `Setup` tab and `Run Preflight` to see which speech path is active.
+- `Run Preflight` shows both browser and backend result cards:
   that is expected when backend transcription is configured. The shortcut now
   compares both paths in one run so you can see transcript and timing side by
   side.

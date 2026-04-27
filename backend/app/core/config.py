@@ -12,7 +12,6 @@ AI_API_KEY_ALIASES = ("AI_API_KEY", "OPENAI_API_KEY", "ANTHROPIC_API_KEY")
 AI_FALLBACK_API_KEY_ALIASES = (
     "AI_FALLBACK_API_KEY",
     "ANTHROPIC_API_KEY",
-    "AI_API_KEY",
 )
 TRANSCRIPTION_API_KEY_ALIASES = (
     "TRANSCRIPTION_API_KEY",
@@ -116,7 +115,6 @@ class Settings(BaseSettings):
         validation_alias=AliasChoices(
             "AI_FALLBACK_API_KEY",
             "ANTHROPIC_API_KEY",
-            "AI_API_KEY",
         ),
     )
     ai_analysis_model: str = Field(
@@ -326,6 +324,15 @@ class Settings(BaseSettings):
     def any_ai_ready(self) -> bool:
         return self.primary_ai_ready() or self.fallback_ai_ready()
 
+    def transcription_ready(self) -> bool:
+        return self._ai_stack_ready(
+            api_base_url=self.transcription_api_base_url,
+            api_key=self.transcription_api_key,
+            analysis_model=self.transcription_model,
+            coach_model=self.transcription_model,
+            debrief_model=self.transcription_model,
+        )
+
     def ai_health_coach_model(self) -> str:
         return self.ai_coach_model.strip() or self.ai_fallback_coach_model.strip()
 
@@ -340,6 +347,7 @@ class Settings(BaseSettings):
     ) -> bool:
         return (
             bool(api_key)
+            and api_key.strip().upper() != "EMPTY"
             and not is_placeholder_api_key(api_key)
             and bool(api_base_url and api_base_url.strip())
             and bool(analysis_model.strip())

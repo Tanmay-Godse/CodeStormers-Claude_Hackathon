@@ -94,7 +94,7 @@ class AnalysisDraft(BaseModel):
 
     step_status: Literal["pass", "retry", "unclear", "unsafe"]
     confidence: float = Field(ge=0, le=1)
-    visible_observations: list[str] = Field(min_length=2, max_length=4)
+    visible_observations: list[str] = Field(min_length=1, max_length=4)
     issues: list[Issue] = Field(default_factory=list, max_length=3)
     coaching_message: str
     next_action: str

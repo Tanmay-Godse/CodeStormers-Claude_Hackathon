@@ -82,9 +82,9 @@ The seeded public judge accounts are still useful for a controlled demo:
 2. Create a normal student account or sign in with one judge account.
 3. Confirm `/dashboard`, `/knowledge`, and `/library` load.
 4. Open `/train/simple-interrupted-suture` and confirm the `Setup` tab loads its preflight checks.
-5. Run `Check Audio` and confirm browser/backend speech diagnostics appear as expected for that environment.
-6. Run `Check My Step` once on `Setup` and confirm it stays local and finishes quickly.
-7. Start preview and run the first real non-setup `Check My Step`, then confirm analysis requests reach the backend and quota updates there.
+5. Click `Run Preflight` and confirm browser/backend speech diagnostics appear as expected for that environment.
+6. Start the camera on `Setup` and confirm the automatic setup check stays local and finishes quickly.
+7. Hold the first real non-setup stage steady, then confirm automatic analysis requests reach the backend and quota updates there.
 8. Confirm `FRONTEND_ORIGIN` matches the deployed frontend URL exactly.
 
 ## Related Docs

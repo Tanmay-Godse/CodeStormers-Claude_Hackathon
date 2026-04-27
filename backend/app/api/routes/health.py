@@ -7,13 +7,7 @@ router = APIRouter(tags=["health"])
 @router.get("/health")
 def health_check() -> dict[str, bool | str]:
     ai_ready = settings.any_ai_ready()
-    transcription_ready = settings._ai_stack_ready(
-        api_base_url=settings.transcription_api_base_url,
-        api_key=settings.transcription_api_key,
-        analysis_model=settings.transcription_model,
-        coach_model=settings.transcription_model,
-        debrief_model=settings.transcription_model,
-    )
+    transcription_ready = settings.transcription_ready()
 
     return {
         "status": "ok",

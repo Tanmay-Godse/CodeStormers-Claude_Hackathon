@@ -58,7 +58,7 @@ Browser
 
 1. A learner signs in or creates an account.
 2. The trainer loads the suturing procedure, restores the active session, and runs setup preflight checks.
-3. `Check Audio` can test Browser STT and backend transcription before grading starts.
+3. `Run Preflight` can test Browser STT and backend transcription before grading starts.
 4. Setup checks and setup-only preview stay local and do not consume a counted live session; the live-session allowance is consumed when real non-setup training starts.
 5. `analyze-frame` runs a safety gate first, then stage analysis, grading/scoring, and optional human-review escalation.
 6. `coach-chat` drives the voice loop, optionally transcribing learner audio first and reusing the safety gate for frame-aware coaching.
@@ -309,10 +309,10 @@ Runtime files are resolved through `runtime_data_path()`: locally they live unde
 - auth gate plus procedure/session hydration after opportunistic backend sync
 - reset-to-clean-run trainer startup while preserving older sessions for review
 - local setup verification for backend reachability, secure context, camera, microphone, speech path, network, and quota
-- `Check Audio` shortcut plus the deeper `Mic and speech test` panel that can compare Browser STT against backend transcription
+- `Run Preflight` shortcut plus the deeper `Mic and speech test` panel that can compare Browser STT against backend transcription
 - setup-only preview and setup-stage checks that do not consume the counted live-session quota
 - real live-session activation, 2-minute demo window, pause/resume, and quota refresh
-- manual `Check My Step` analysis flow, including local setup pass/fail synthesis and automatic setup-to-stage advance
+- automatic stage analysis flow, including local setup pass/fail synthesis and setup-to-stage advance
 - offline-first analysis fallback logging
 - hands-free voice coach loop with proactive turns, browser-first speech capture, backend fallback, and duplicate-guidance suppression
 - pause/end session controls, footer audio insight cards, and session persistence back into browser storage plus synced backend state

@@ -193,9 +193,9 @@ Setup and audio flow:
 - `Setup` tab runs a preflight for backend/API reachability, AI readiness,
   secure context, camera and mic permissions, browser STT availability, backend
   transcription readiness, network state, and live-session quota state
-- `Check Audio` is audio-only and does not send a camera frame or consume
+- `Run Preflight` is audio-only and does not send a camera frame or consume
   image-analysis calls
-- `Check Audio` tries Browser STT first and, when backend transcription is
+- `Run Preflight` tries Browser STT first and, when backend transcription is
   ready, also captures one backend comparison sample so both result cards can be
   shown together
 - browser speech playback is attempted first for coach audio, with backend TTS
@@ -205,9 +205,9 @@ Session behavior and controls:
 
 - starting the camera opens local preview first and does not consume quota by itself
 - setup does not auto-pass when the camera starts
-- on the setup stage, `Check My Step` runs a local preflight, can briefly open
-  camera and mic permissions, and then closes the preview again
-- the counted live session begins on the first real non-setup `Check My Step`
+- on the setup stage, the automatic setup check runs a local preflight, can
+  briefly open camera and mic permissions, and then closes the preview again
+- the counted live session begins on the first real non-setup automatic check
 - `Pause Session` stops live capture while preserving the current run state and
   remaining time
 - `End Session` closes the current run cleanly
@@ -279,6 +279,9 @@ curl http://localhost:8001/api/v1/procedures/simple-interrupted-suture
   verify `AI_PROVIDER`, `AI_API_BASE_URL`, `AI_API_KEY`, and the selected local model id.
 - Anthropic fallback never engages:
   `AI_FALLBACK_API_KEY` or the `AI_FALLBACK_*_MODEL` values are missing.
+- Local-vLLM-only mode still tries Anthropic:
+  clear `AI_FALLBACK_API_KEY` and any exported `ANTHROPIC_API_KEY`, then restart
+  the backend.
 - Frontend is deployed on a different origin:
   update `FRONTEND_ORIGIN` in the backend and restart it.
 - Learner voice is not transcribed:
